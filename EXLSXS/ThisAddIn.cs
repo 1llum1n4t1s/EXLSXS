@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Reflection;
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using Microsoft.Office.Interop.Excel;
 
@@ -13,7 +14,8 @@ namespace EXLSXS
     [Guid("87654321-4321-4321-4321-210987654321")]
     public sealed class ThisAddIn : ExcelAddInBase
     {
-        private Dictionary<int, AppEventListener> _workbookEventListeners = new();
+        private readonly Dictionary<Workbook, AppEventListener> _workbookEventListeners =
+            new(new ReferenceEqualityComparer<Workbook>());
         private string _assemblyTitle;
         private string _assemblyProduct;
         private string _publishVersion;
@@ -21,6 +23,7 @@ namespace EXLSXS
 
         public ThisAddIn()
         {
+            Globals.ThisAddIn = this;
             SetupAddInInfoProperty();
         }
 
@@ -91,14 +94,35 @@ namespace EXLSXS
         /// <summary>ワークブックのイベントをリッスン</summary>
         private void RegisterWorkbookEvents(Workbook workbook)
         {
+            if (workbook == null)
+                return;
+
             try
             {
-                var listener = new AppEventListener(workbook);
-                _workbookEventListeners[workbook.GetHashCode()] = listener;
+                if (_workbookEventListeners.ContainsKey(workbook))
+                    return;
+
+                var listener = new AppEventListener(workbook, RemoveWorkbookEvents);
+                _workbookEventListeners.Add(workbook, listener);
             }
             catch (Exception ex)
             {
                 System.Diagnostics.Debug.WriteLine($"RegisterWorkbookEvents Error: {ex}");
+            }
+        }
+
+        private void RemoveWorkbookEvents(Workbook workbook)
+        {
+            if (workbook == null)
+                return;
+
+            try
+            {
+                _workbookEventListeners.Remove(workbook);
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"RemoveWorkbookEvents Error: {ex}");
             }
         }
 
@@ -134,6 +158,7 @@ namespace EXLSXS
 
                 // イベントリスナーのクリーンアップ
                 _workbookEventListeners?.Clear();
+                Globals.ThisAddIn = null;
             }
             catch (Exception ex)
             {
@@ -213,11 +238,13 @@ namespace EXLSXS
     /// </summary>
     internal class AppEventListener
     {
-        private Workbook _workbook;
+        private readonly Workbook _workbook;
+        private readonly Action<Workbook> _onWorkbookClosed;
 
-        public AppEventListener(Workbook workbook)
+        public AppEventListener(Workbook workbook, Action<Workbook> onWorkbookClosed)
         {
             _workbook = workbook;
+            _onWorkbookClosed = onWorkbookClosed;
             try
             {
                 // ワークブック イベントの登録
@@ -242,8 +269,20 @@ namespace EXLSXS
             {
                 _workbook.BeforeSave -= Workbook_BeforeSave;
                 _workbook.BeforeClose -= Workbook_BeforeClose;
+                _onWorkbookClosed?.Invoke(_workbook);
             }
-            catch { }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Workbook_BeforeClose Error: {ex}");
+            }
         }
+    }
+
+    internal sealed class ReferenceEqualityComparer<T> : IEqualityComparer<T>
+        where T : class
+    {
+        public bool Equals(T x, T y) => ReferenceEquals(x, y);
+
+        public int GetHashCode(T obj) => RuntimeHelpers.GetHashCode(obj);
     }
 }
