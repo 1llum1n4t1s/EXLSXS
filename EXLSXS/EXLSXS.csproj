@@ -1,0 +1,41 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project Sdk="Microsoft.NET.Sdk.WindowsDesktop">
+  <PropertyGroup>
+    <ProjectGuid>{A6011FB9-7485-4F4C-A685-426D6749A6D7}</ProjectGuid>
+    <OutputType>Library</OutputType>
+    <RootNamespace>EXLSXS</RootNamespace>
+    <AssemblyName>EXLSXS</AssemblyName>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <FileAlignment>512</FileAlignment>
+    <UseWPF>true</UseWPF>
+    <GenerateComVisibleTypes>true</GenerateComVisibleTypes>
+    <RegisterForComInterop>true</RegisterForComInterop>
+    <LangVersion>latest</LangVersion>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|AnyCPU'">
+    <DebugType>full</DebugType>
+    <DebugSymbols>true</DebugSymbols>
+    <Optimize>false</Optimize>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|AnyCPU'">
+    <DebugType>pdbonly</DebugType>
+    <DebugSymbols>true</DebugSymbols>
+    <Optimize>true</Optimize>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Office.Interop.Excel" Version="15.27.1" />
+    <PackageReference Include="Microsoft.Office.Interop.Core" Version="15.0.4693.1000" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Reference Include="System.ComponentModel.Composition" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Page Include="App.xaml" />
+    <Page Include="AboutBox.xaml" />
+  </ItemGroup>
+</Project>
