@@ -2,7 +2,7 @@ using System;
 using System.Runtime.InteropServices;
 using Microsoft.Office.Interop.Excel;
 
-namespace Tk4.ExcelAddIns.Finisher
+namespace EXLSXS
 {
     /// <summary>
     /// COM アドイン基盤クラス (.NET 10 対応)

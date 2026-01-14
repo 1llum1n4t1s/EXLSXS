@@ -1,7 +1,7 @@
 ﻿using System;
 using System.Windows;
 
-namespace Tk4.ExcelAddIns.Finisher
+namespace EXLSXS
 {
     /// <summary>
     /// UI ダイアログ ヘルパー クラス - WPF 実装
