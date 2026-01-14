@@ -1,0 +1,125 @@
+name: Velopack リリース作成
+
+on:
+  push:
+
+permissions:
+  contents: write
+
+jobs:
+  build-release:
+    name: Velopack リリース作成
+    runs-on: windows-latest
+    if: ${{ startsWith(github.ref, 'refs/heads/release/') }}
+    steps:
+      - name: リポジトリをチェックアウト
+        uses: actions/checkout@v4
+
+      - name: .NET SDK をセットアップ
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: 依存関係を復元
+        run: dotnet restore EXLSXS.csproj
+
+      - name: リリースバージョンを設定
+        shell: pwsh
+        run: |
+          $csprojPath = "EXLSXS.csproj"
+          $version = $null
+          $content = Get-Content -Path $csprojPath -Raw
+          if ($content -match '<Version>([^<]+)</Version>') {
+            $version = $matches[1]
+          }
+          if ([string]::IsNullOrWhiteSpace($version)) {
+            Write-Error "Version not found in csproj"
+            exit 1
+          }
+          Write-Host "Version found: $version"
+          Add-Content -LiteralPath $env:GITHUB_ENV -Value "RELEASE_VERSION=$version" -Encoding utf8
+
+      - name: ターゲットフレームワークを取得
+        shell: pwsh
+        run: |
+          $csprojPath = "EXLSXS.csproj"
+          $targetFramework = $null
+          $content = Get-Content -Path $csprojPath -Raw
+          if ($content -match '<TargetFramework>([^<]+)</TargetFramework>') {
+            $targetFramework = $matches[1]
+          }
+          if ([string]::IsNullOrWhiteSpace($targetFramework)) {
+            Write-Error "TargetFramework not found"
+            exit 1
+          }
+          Write-Host "TargetFramework found: $targetFramework"
+          Add-Content -LiteralPath $env:GITHUB_ENV -Value "TARGET_FRAMEWORK=$targetFramework" -Encoding utf8
+
+      - name: アドインをリリースビルド
+        shell: pwsh
+        run: |
+          $publishDir = Join-Path "bin" "Release" "$env:TARGET_FRAMEWORK" "publish"
+          if (Test-Path $publishDir) {
+            Remove-Item -Path $publishDir -Recurse -Force
+          }
+          Write-Host "Building and publishing add-in..."
+          dotnet publish "EXLSXS.csproj" -c Release -f $env:TARGET_FRAMEWORK --self-contained false
+          if ($LASTEXITCODE -ne 0) {
+            Write-Error "dotnet publish failed"
+            exit 1
+          }
+          Write-Host "Build completed successfully"
+
+      - name: DNA ファイルをコピー
+        shell: pwsh
+        run: |
+          $publishDir = Join-Path "bin" "Release" "$env:TARGET_FRAMEWORK" "publish"
+          $dnaSource = "EXLSXS-AddIn.dna"
+          $dnaDestination = Join-Path $publishDir "EXLSXS-AddIn.dna"
+          Copy-Item -Path $dnaSource -Destination $dnaDestination -Force
+          Write-Host "DNA file copied successfully"
+
+      - name: Velopack CLI をインストール
+        shell: pwsh
+        run: dotnet tool install --global vpk
+
+      - name: Velopack パッケージを作成
+        shell: pwsh
+        run: |
+          $publishDir = Join-Path "bin" "Release" "$env:TARGET_FRAMEWORK" "publish"
+          $outputDir = "artifacts"
+          if (Test-Path $outputDir) {
+            Remove-Item -Path $outputDir -Recurse -Force
+          }
+          New-Item -ItemType Directory -Path $outputDir -Force | Out-Null
+          vpk pack --packId EXLSXS --packVersion $env:RELEASE_VERSION --packTitle "EXLSXS Finisher" --packAuthors "EXLSXS" --mainExe EXLSXS.dll --packDir $publishDir --outputDir $outputDir
+          if ($LASTEXITCODE -ne 0) {
+            Write-Error "vpk pack failed"
+            exit 1
+          }
+          Write-Host "Package created successfully"
+
+      - name: 既存リリースを削除
+        shell: pwsh
+        run: |
+          $version = $env:RELEASE_VERSION
+          try {
+            gh release delete $version --repo "${{ github.repository }}" --yes 2>$null
+          } catch {
+            Write-Host "No existing release to delete"
+          }
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: GitHub Releases にアップロード
+        shell: pwsh
+        run: |
+          $outputDir = "artifacts"
+          $repoUrl = "https://github.com/${{ github.repository }}"
+          $releaseName = "EXLSXS $env:RELEASE_VERSION"
+          vpk upload github --repoUrl $repoUrl --token "${{ secrets.GITHUB_TOKEN }}" --outputDir $outputDir --channel win --publish --releaseName $releaseName
+          if ($LASTEXITCODE -ne 0) {
+            Write-Error "vpk upload failed"
+            exit 1
+          }
+          Write-Host "Upload completed successfully"
