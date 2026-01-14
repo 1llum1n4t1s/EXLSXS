@@ -1,10 +1,10 @@
 ﻿using System;
-using System.Windows.Forms;
+using System.Windows;
 
 namespace Tk4.ExcelAddIns.Finisher
 {
     /// <summary>
-    /// UI ダイアログ ヘルパー クラス
+    /// UI ダイアログ ヘルパー クラス - WPF 実装
     /// </summary>
     public static class UIHelper
     {
@@ -19,9 +19,13 @@ namespace Tk4.ExcelAddIns.Finisher
             try
             {
                 string formattedMessage = string.Format(message, args);
-                MessageBoxIcon icon = showWarningIcon ? MessageBoxIcon.Exclamation : MessageBoxIcon.Question;
-                DialogResult result = MessageBox.Show(formattedMessage, GetTitle(), MessageBoxButtons.YesNo, icon);
-                return result == DialogResult.Yes;
+                MessageBoxImage icon = showWarningIcon ? MessageBoxImage.Exclamation : MessageBoxImage.Question;
+                MessageBoxResult result = MessageBox.Show(
+                    formattedMessage,
+                    GetTitle(),
+                    MessageBoxButton.YesNo,
+                    icon);
+                return result == MessageBoxResult.Yes;
             }
             catch (Exception ex)
             {
@@ -36,7 +40,11 @@ namespace Tk4.ExcelAddIns.Finisher
             try
             {
                 string formattedMessage = string.Format(message, args);
-                MessageBox.Show(formattedMessage, GetTitle(), MessageBoxButtons.OK, MessageBoxIcon.Information);
+                MessageBox.Show(
+                    formattedMessage,
+                    GetTitle(),
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Information);
             }
             catch (Exception ex)
             {
@@ -50,7 +58,11 @@ namespace Tk4.ExcelAddIns.Finisher
             try
             {
                 string formattedMessage = string.Format(message, args);
-                MessageBox.Show(formattedMessage, GetTitle(), MessageBoxButtons.OK, MessageBoxIcon.Exclamation);
+                MessageBox.Show(
+                    formattedMessage,
+                    GetTitle(),
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Exclamation);
             }
             catch (Exception ex)
             {
@@ -64,7 +76,11 @@ namespace Tk4.ExcelAddIns.Finisher
             try
             {
                 string message = e?.Message ?? "Unknown error occurred";
-                MessageBox.Show(message, GetTitle(), MessageBoxButtons.OK, MessageBoxIcon.Error);
+                MessageBox.Show(
+                    message,
+                    GetTitle(),
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Error);
             }
             catch (Exception ex)
             {
