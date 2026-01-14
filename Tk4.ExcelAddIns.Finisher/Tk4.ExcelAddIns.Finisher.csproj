@@ -7,7 +7,7 @@
     <AssemblyName>Tk4.ExcelAddIns.Finisher</AssemblyName>
     <TargetFramework>net10.0-windows</TargetFramework>
     <FileAlignment>512</FileAlignment>
-    <UseWindowsForms>true</UseWindowsForms>
+    <UseWPF>true</UseWPF>
     <GenerateComVisibleTypes>true</GenerateComVisibleTypes>
     <RegisterForComInterop>true</RegisterForComInterop>
     <LangVersion>latest</LangVersion>
@@ -32,5 +32,9 @@
 
   <ItemGroup>
     <Reference Include="System.ComponentModel.Composition" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Page Include="AboutBox.xaml" />
   </ItemGroup>
 </Project>
