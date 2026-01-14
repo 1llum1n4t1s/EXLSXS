@@ -1,0 +1,101 @@
+﻿{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "ビルド - Tk4.ExcelAddIns.Finisher ソリューション - Debug",
+      "type": "shell",
+      "command": "C:\\Program Files\\Microsoft Visual Studio\\18\\Community\\MSBuild\\Current\\Bin\\MSBuild.exe",
+      "args": [
+        "Tk4.ExcelAddIns.Finisher.sln",
+        "/p:Configuration=Debug",
+        "/verbosity:normal"
+      ],
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "presentation": {
+        "echo": true,
+        "reveal": "always",
+        "focus": false,
+        "panel": "shared",
+        "showReuseMessage": true,
+        "clear": false
+      },
+      "problemMatcher": "$msCompile",
+      "detail": "Visual Studio 2026 MSBuildを使用してTk4.ExcelAddIns.Finisherソリューション全体をDebug構成でビルド"
+    },
+    {
+      "label": "ビルド - Tk4.ExcelAddIns.Finisher ソリューション - Release",
+      "type": "shell",
+      "command": "C:\\Program Files\\Microsoft Visual Studio\\18\\Community\\MSBuild\\Current\\Bin\\MSBuild.exe",
+      "args": [
+        "Tk4.ExcelAddIns.Finisher.sln",
+        "/p:Configuration=Release",
+        "/verbosity:normal"
+      ],
+      "group": {
+        "kind": "build",
+        "isDefault": false
+      },
+      "presentation": {
+        "echo": true,
+        "reveal": "always",
+        "focus": false,
+        "panel": "shared",
+        "showReuseMessage": true,
+        "clear": false
+      },
+      "problemMatcher": "$msCompile",
+      "detail": "Visual Studio 2026 MSBuildを使用してTk4.ExcelAddIns.Finisherソリューション全体をRelease構成でビルド"
+    },
+    {
+      "label": "クリーン - Tk4.ExcelAddIns.Finisher ソリューション",
+      "type": "shell",
+      "command": "C:\\Program Files\\Microsoft Visual Studio\\18\\Community\\MSBuild\\Current\\Bin\\MSBuild.exe",
+      "args": [
+        "Tk4.ExcelAddIns.Finisher.sln",
+        "/t:Clean",
+        "/verbosity:normal"
+      ],
+      "group": {
+        "kind": "build",
+        "isDefault": false
+      },
+      "presentation": {
+        "echo": true,
+        "reveal": "always",
+        "focus": false,
+        "panel": "shared",
+        "showReuseMessage": true,
+        "clear": false
+      },
+      "problemMatcher": "$msCompile",
+      "detail": "Visual Studio 2026 MSBuildを使用してTk4.ExcelAddIns.Finisherソリューション全体をクリーン"
+    },
+    {
+      "label": "リビルド - Tk4.ExcelAddIns.Finisher ソリューション",
+      "type": "shell",
+      "command": "C:\\Program Files\\Microsoft Visual Studio\\18\\Community\\MSBuild\\Current\\Bin\\MSBuild.exe",
+      "args": [
+        "Tk4.ExcelAddIns.Finisher.sln",
+        "/t:Rebuild",
+        "/verbosity:normal"
+      ],
+      "group": {
+        "kind": "build",
+        "isDefault": false
+      },
+      "presentation": {
+        "echo": true,
+        "reveal": "always",
+        "focus": false,
+        "panel": "shared",
+        "showReuseMessage": true,
+        "clear": false
+      },
+      "problemMatcher": "$msCompile",
+      "detail": "Visual Studio 2026 MSBuildを使用してTk4.ExcelAddIns.Finisherソリューション全体をリビルド"
+    }
+  ]
+}
