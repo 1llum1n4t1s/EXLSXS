@@ -2,7 +2,7 @@ using System;
 using System.Diagnostics;
 using System.Windows;
 
-namespace Tk4.ExcelAddIns.Finisher
+namespace EXLSXS
 {
     /// <summary>
     /// About ダイアログ - WPF 実装 (.NET 10)

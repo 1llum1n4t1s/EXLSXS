@@ -1,7 +1,7 @@
 ﻿using System;
 using System.Diagnostics;
 
-namespace Tk4.ExcelAddIns.Finisher
+namespace EXLSXS
 {
     /// <summary>
     /// グローバル設定クラス (.NET 10 COM 相互運用対応)

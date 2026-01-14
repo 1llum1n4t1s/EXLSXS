@@ -4,10 +4,10 @@ using System.Reflection;
 using System.Runtime.InteropServices;
 using Microsoft.Office.Interop.Excel;
 
-namespace Tk4.ExcelAddIns.Finisher
+namespace EXLSXS
 {
     /// <summary>
-    /// Tk4 Excel アドイン - .NET 10 COM相互運用実装
+    /// Excel COM アドイン - .NET 10 実装
     /// </summary>
     [ComVisible(true)]
     [Guid("87654321-4321-4321-4321-210987654321")]

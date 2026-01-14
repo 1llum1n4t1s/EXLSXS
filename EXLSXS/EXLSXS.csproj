@@ -3,8 +3,8 @@
   <PropertyGroup>
     <ProjectGuid>{A6011FB9-7485-4F4C-A685-426D6749A6D7}</ProjectGuid>
     <OutputType>Library</OutputType>
-    <RootNamespace>Tk4.ExcelAddIns.Finisher</RootNamespace>
-    <AssemblyName>Tk4.ExcelAddIns.Finisher</AssemblyName>
+    <RootNamespace>EXLSXS</RootNamespace>
+    <AssemblyName>EXLSXS</AssemblyName>
     <TargetFramework>net10.0-windows</TargetFramework>
     <FileAlignment>512</FileAlignment>
     <UseWPF>true</UseWPF>
@@ -35,6 +35,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <Page Include="App.xaml" />
     <Page Include="AboutBox.xaml" />
   </ItemGroup>
 </Project>
