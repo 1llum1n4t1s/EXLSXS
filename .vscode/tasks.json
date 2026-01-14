@@ -2,11 +2,11 @@
   "version": "2.0.0",
   "tasks": [
     {
-      "label": "ビルド - Tk4.ExcelAddIns.Finisher ソリューション - Debug",
+      "label": "ビルド - EXLSXS ソリューション - Debug",
       "type": "shell",
       "command": "C:\\Program Files\\Microsoft Visual Studio\\18\\Community\\MSBuild\\Current\\Bin\\MSBuild.exe",
       "args": [
-        "Tk4.ExcelAddIns.Finisher.sln",
+        "EXLSXS.slnx",
         "/p:Configuration=Debug",
         "/verbosity:normal"
       ],
@@ -23,14 +23,14 @@
         "clear": false
       },
       "problemMatcher": "$msCompile",
-      "detail": "Visual Studio 2026 MSBuildを使用してTk4.ExcelAddIns.Finisherソリューション全体をDebug構成でビルド"
+      "detail": "Visual Studio 2026 MSBuildを使用してEXLSXSソリューション全体をDebug構成でビルド"
     },
     {
-      "label": "ビルド - Tk4.ExcelAddIns.Finisher ソリューション - Release",
+      "label": "ビルド - EXLSXS ソリューション - Release",
       "type": "shell",
       "command": "C:\\Program Files\\Microsoft Visual Studio\\18\\Community\\MSBuild\\Current\\Bin\\MSBuild.exe",
       "args": [
-        "Tk4.ExcelAddIns.Finisher.sln",
+        "EXLSXS.slnx",
         "/p:Configuration=Release",
         "/verbosity:normal"
       ],
@@ -47,14 +47,14 @@
         "clear": false
       },
       "problemMatcher": "$msCompile",
-      "detail": "Visual Studio 2026 MSBuildを使用してTk4.ExcelAddIns.Finisherソリューション全体をRelease構成でビルド"
+      "detail": "Visual Studio 2026 MSBuildを使用してEXLSXSソリューション全体をRelease構成でビルド"
     },
     {
-      "label": "クリーン - Tk4.ExcelAddIns.Finisher ソリューション",
+      "label": "クリーン - EXLSXS ソリューション",
       "type": "shell",
       "command": "C:\\Program Files\\Microsoft Visual Studio\\18\\Community\\MSBuild\\Current\\Bin\\MSBuild.exe",
       "args": [
-        "Tk4.ExcelAddIns.Finisher.sln",
+        "EXLSXS.slnx",
         "/t:Clean",
         "/verbosity:normal"
       ],
@@ -71,14 +71,14 @@
         "clear": false
       },
       "problemMatcher": "$msCompile",
-      "detail": "Visual Studio 2026 MSBuildを使用してTk4.ExcelAddIns.Finisherソリューション全体をクリーン"
+      "detail": "Visual Studio 2026 MSBuildを使用してEXLSXSソリューション全体をクリーン"
     },
     {
-      "label": "リビルド - Tk4.ExcelAddIns.Finisher ソリューション",
+      "label": "リビルド - EXLSXS ソリューション",
       "type": "shell",
       "command": "C:\\Program Files\\Microsoft Visual Studio\\18\\Community\\MSBuild\\Current\\Bin\\MSBuild.exe",
       "args": [
-        "Tk4.ExcelAddIns.Finisher.sln",
+        "EXLSXS.slnx",
         "/t:Rebuild",
         "/verbosity:normal"
       ],
@@ -95,7 +95,7 @@
         "clear": false
       },
       "problemMatcher": "$msCompile",
-      "detail": "Visual Studio 2026 MSBuildを使用してTk4.ExcelAddIns.Finisherソリューション全体をリビルド"
+      "detail": "Visual Studio 2026 MSBuildを使用してEXLSXSソリューション全体をリビルド"
     }
   ]
 }
