@@ -3,32 +3,73 @@ using System.Windows.Forms;
 
 namespace Tk4.ExcelAddIns.Finisher
 {
-	// Token: 0x02000009 RID: 9
-	public static class UIHelper
-	{
-		// Token: 0x06000048 RID: 72 RVA: 0x00003780 File Offset: 0x00001980
-		public static bool ShowConfirmDialog(bool showWarningIcon, string message, params string[] args)
-		{
-			DialogResult dialogResult = MessageBox.Show(string.Format(message, args), Globals.ThisAddIn.AssemblyTitle, MessageBoxButtons.YesNo, showWarningIcon ? MessageBoxIcon.Exclamation : MessageBoxIcon.Question);
-			return dialogResult == DialogResult.Yes;
-		}
+    /// <summary>
+    /// UI ダイアログ ヘルパー クラス
+    /// </summary>
+    public static class UIHelper
+    {
+        private static string GetTitle()
+        {
+            return Globals.ThisAddIn?.AssemblyTitle ?? "Excel Finisher Add-in";
+        }
 
-		// Token: 0x06000049 RID: 73 RVA: 0x000037B2 File Offset: 0x000019B2
-		public static void ShowInfomationDialog(string message, params string[] args)
-		{
-			MessageBox.Show(string.Format(message, args), Globals.ThisAddIn.AssemblyTitle, MessageBoxButtons.OK, MessageBoxIcon.Asterisk);
-		}
+        /// <summary>確認ダイアログを表示</summary>
+        public static bool ShowConfirmDialog(bool showWarningIcon, string message, params string[] args)
+        {
+            try
+            {
+                string formattedMessage = string.Format(message, args);
+                MessageBoxIcon icon = showWarningIcon ? MessageBoxIcon.Exclamation : MessageBoxIcon.Question;
+                DialogResult result = MessageBox.Show(formattedMessage, GetTitle(), MessageBoxButtons.YesNo, icon);
+                return result == DialogResult.Yes;
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"ShowConfirmDialog Error: {ex}");
+                return false;
+            }
+        }
 
-		// Token: 0x0600004A RID: 74 RVA: 0x000037CE File Offset: 0x000019CE
-		public static void ShowWarningDialog(string message, params string[] args)
-		{
-			MessageBox.Show(string.Format(message, args), Globals.ThisAddIn.AssemblyTitle, MessageBoxButtons.OK, MessageBoxIcon.Exclamation);
-		}
+        /// <summary>情報ダイアログを表示</summary>
+        public static void ShowInformationDialog(string message, params string[] args)
+        {
+            try
+            {
+                string formattedMessage = string.Format(message, args);
+                MessageBox.Show(formattedMessage, GetTitle(), MessageBoxButtons.OK, MessageBoxIcon.Information);
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"ShowInformationDialog Error: {ex}");
+            }
+        }
 
-		// Token: 0x0600004B RID: 75 RVA: 0x000037EA File Offset: 0x000019EA
-		public static void ShowErrorDialog(Exception e)
-		{
-			MessageBox.Show(e.Message, Globals.ThisAddIn.AssemblyTitle, MessageBoxButtons.OK, MessageBoxIcon.Hand);
-		}
-	}
+        /// <summary>警告ダイアログを表示</summary>
+        public static void ShowWarningDialog(string message, params string[] args)
+        {
+            try
+            {
+                string formattedMessage = string.Format(message, args);
+                MessageBox.Show(formattedMessage, GetTitle(), MessageBoxButtons.OK, MessageBoxIcon.Exclamation);
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"ShowWarningDialog Error: {ex}");
+            }
+        }
+
+        /// <summary>エラー ダイアログを表示</summary>
+        public static void ShowErrorDialog(Exception e)
+        {
+            try
+            {
+                string message = e?.Message ?? "Unknown error occurred";
+                MessageBox.Show(message, GetTitle(), MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"ShowErrorDialog Error: {ex}");
+            }
+        }
+    }
 }
