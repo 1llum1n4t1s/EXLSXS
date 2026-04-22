@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <SupportedOSPlatformVersion>8.0</SupportedOSPlatformVersion>
+    <RuntimeIdentifier Condition="'$(RuntimeIdentifier)' == ''">win-x64</RuntimeIdentifier>
+    <AssemblyName>EXLSXS.Host</AssemblyName>
+    <RootNamespace>EXLSXS.Host</RootNamespace>
+    <Version>1.2.0</Version>
+    <AssemblyTitle>EXLSXS Host</AssemblyTitle>
+    <AssemblyDescription>Installer and updater host for EXLSXS VSTO add-in.</AssemblyDescription>
+    <AssemblyCompany>EXLSXS</AssemblyCompany>
+    <AssemblyProduct>EXLSXS</AssemblyProduct>
+    <Authors>EXLSXS</Authors>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Velopack" Version="0.0.1369-g1d5c984" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="appsettings.json" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>
