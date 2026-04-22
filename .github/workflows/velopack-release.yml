@@ -1,125 +1,94 @@
-name: Velopack リリース作成
+name: Velopack Release
 
 on:
   push:
+    branches:
+      - "release/**"
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  build-release:
-    name: Velopack リリース作成
+  build:
+    name: Build Velopack release
     runs-on: windows-latest
-    if: ${{ startsWith(github.ref, 'refs/heads/release/') }}
+    environment: release
+    permissions:
+      contents: read
+
     steps:
-      - name: リポジトリをチェックアウト
-        uses: actions/checkout@v4
-
-      - name: .NET SDK をセットアップ
-        uses: actions/setup-dotnet@v4
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
-          dotnet-version: '10.0.x'
+          persist-credentials: false
 
-      - name: 依存関係を復元
-        run: dotnet restore EXLSXS.csproj
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9
+        with:
+          dotnet-version: "10.0.x"
 
-      - name: リリースバージョンを設定
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@6fb02220983dee41ce7ae257b6f4d8f9bf5ed4ce
+
+      - name: Build Velopack package
+        shell: pwsh
+        env:
+          EXLSXS_VSTO_SIGNING_PFX_BASE64: ${{ secrets.EXLSXS_VSTO_SIGNING_PFX_BASE64 }}
+          EXLSXS_VSTO_SIGNING_PFX_PASSWORD: ${{ secrets.EXLSXS_VSTO_SIGNING_PFX_PASSWORD }}
+          EXLSXS_VSTO_SIGNING_THUMBPRINT: ${{ secrets.EXLSXS_VSTO_SIGNING_THUMBPRINT }}
+          EXLSXS_VELOPACK_SIGN_PARAMS: ${{ secrets.EXLSXS_VELOPACK_SIGN_PARAMS }}
+          EXLSXS_VELOPACK_AZURE_TRUSTED_SIGN_FILE: ${{ secrets.EXLSXS_VELOPACK_AZURE_TRUSTED_SIGN_FILE }}
+          EXLSXS_EXPECTED_PUBLISHER_THUMBPRINT: ${{ secrets.EXLSXS_EXPECTED_PUBLISHER_THUMBPRINT }}
+          EXLSXS_EXPECTED_PUBLISHER_SUBJECT: ${{ secrets.EXLSXS_EXPECTED_PUBLISHER_SUBJECT }}
+        run: |
+          .\build\pack-velopack.ps1 `
+            -Channel win `
+            -UpdateSource "https://github.com/${{ github.repository }}" `
+            -UpdateSourceKind Github `
+            -RequireVelopackSigning
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: exlsxs-velopack-win
+          path: artifacts/velopack-releases/*
+
+  publish:
+    name: Publish GitHub release
+    runs-on: windows-latest
+    needs: build
+    environment: release
+    permissions:
+      contents: write
+
+    steps:
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Download workflow artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: exlsxs-velopack-win
+          path: artifacts/velopack-releases
+
+      - name: Install Velopack CLI
         shell: pwsh
         run: |
-          $csprojPath = "EXLSXS.csproj"
-          $version = $null
-          $content = Get-Content -Path $csprojPath -Raw
-          if ($content -match '<Version>([^<]+)</Version>') {
-            $version = $matches[1]
-          }
-          if ([string]::IsNullOrWhiteSpace($version)) {
-            Write-Error "Version not found in csproj"
-            exit 1
-          }
-          Write-Host "Version found: $version"
-          Add-Content -LiteralPath $env:GITHUB_ENV -Value "RELEASE_VERSION=$version" -Encoding utf8
+          dotnet tool install --global vpk --version 0.0.1369-g1d5c984
+          "$env:USERPROFILE\.dotnet\tools" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
 
-      - name: ターゲットフレームワークを取得
+      - name: Publish GitHub Release
         shell: pwsh
-        run: |
-          $csprojPath = "EXLSXS.csproj"
-          $targetFramework = $null
-          $content = Get-Content -Path $csprojPath -Raw
-          if ($content -match '<TargetFramework>([^<]+)</TargetFramework>') {
-            $targetFramework = $matches[1]
-          }
-          if ([string]::IsNullOrWhiteSpace($targetFramework)) {
-            Write-Error "TargetFramework not found"
-            exit 1
-          }
-          Write-Host "TargetFramework found: $targetFramework"
-          Add-Content -LiteralPath $env:GITHUB_ENV -Value "TARGET_FRAMEWORK=$targetFramework" -Encoding utf8
-
-      - name: アドインをリリースビルド
-        shell: pwsh
-        run: |
-          $publishDir = Join-Path "bin" "Release" "$env:TARGET_FRAMEWORK" "publish"
-          if (Test-Path $publishDir) {
-            Remove-Item -Path $publishDir -Recurse -Force
-          }
-          Write-Host "Building and publishing add-in..."
-          dotnet publish "EXLSXS.csproj" -c Release -f $env:TARGET_FRAMEWORK --self-contained false
-          if ($LASTEXITCODE -ne 0) {
-            Write-Error "dotnet publish failed"
-            exit 1
-          }
-          Write-Host "Build completed successfully"
-
-      - name: DNA ファイルをコピー
-        shell: pwsh
-        run: |
-          $publishDir = Join-Path "bin" "Release" "$env:TARGET_FRAMEWORK" "publish"
-          $dnaSource = "EXLSXS-AddIn.dna"
-          $dnaDestination = Join-Path $publishDir "EXLSXS-AddIn.dna"
-          Copy-Item -Path $dnaSource -Destination $dnaDestination -Force
-          Write-Host "DNA file copied successfully"
-
-      - name: Velopack CLI をインストール
-        shell: pwsh
-        run: dotnet tool install --global vpk
-
-      - name: Velopack パッケージを作成
-        shell: pwsh
-        run: |
-          $publishDir = Join-Path "bin" "Release" "$env:TARGET_FRAMEWORK" "publish"
-          $outputDir = "artifacts"
-          if (Test-Path $outputDir) {
-            Remove-Item -Path $outputDir -Recurse -Force
-          }
-          New-Item -ItemType Directory -Path $outputDir -Force | Out-Null
-          vpk pack --packId EXLSXS --packVersion $env:RELEASE_VERSION --packTitle "EXLSXS Finisher" --packAuthors "EXLSXS" --mainExe EXLSXS.dll --packDir $publishDir --outputDir $outputDir
-          if ($LASTEXITCODE -ne 0) {
-            Write-Error "vpk pack failed"
-            exit 1
-          }
-          Write-Host "Package created successfully"
-
-      - name: 既存リリースを削除
-        shell: pwsh
-        run: |
-          $version = $env:RELEASE_VERSION
-          try {
-            gh release delete $version --repo "${{ github.repository }}" --yes 2>$null
-          } catch {
-            Write-Host "No existing release to delete"
-          }
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: GitHub Releases にアップロード
-        shell: pwsh
         run: |
-          $outputDir = "artifacts"
           $repoUrl = "https://github.com/${{ github.repository }}"
-          $releaseName = "EXLSXS $env:RELEASE_VERSION"
-          vpk upload github --repoUrl $repoUrl --token "${{ secrets.GITHUB_TOKEN }}" --outputDir $outputDir --channel win --publish --releaseName $releaseName
-          if ($LASTEXITCODE -ne 0) {
-            Write-Error "vpk upload failed"
-            exit 1
-          }
-          Write-Host "Upload completed successfully"
+          vpk upload github `
+            --repoUrl $repoUrl `
+            --token "$env:GH_TOKEN" `
+            --outputDir artifacts\velopack-releases `
+            --channel win `
+            --publish `
+            --releaseName "EXLSXS"
