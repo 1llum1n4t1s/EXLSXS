@@ -76,8 +76,11 @@ namespace EXLSXS
 		// Token: 0x06000024 RID: 36 RVA: 0x000032D8 File Offset: 0x000014D8
 		private void ThisAddIn_Startup(object sender, EventArgs e)
 		{
-			new ComAwareEventInfo(typeof(Microsoft.Office.Interop.Excel.AppEvents_Event), "WorkbookActivate").AddEventHandler(this.Application, new AppEvents_WorkbookActivateEventHandler(this.Application_WorkbookActivate));
-			new ComAwareEventInfo(typeof(Microsoft.Office.Interop.Excel.AppEvents_Event), "WorkbookDeactivate").AddEventHandler(this.Application, new AppEvents_WorkbookDeactivateEventHandler(this.Application_WorkbookDeactivate));
+			// EmbedInteropTypes=True のため、文字列ベースの ComAwareEventInfo は
+			// イベントメタデータが埋め込まれず NullReferenceException になる。
+			// コンパイラが COM イベントバインドを生成する通常の += で購読する。
+			this.Application.WorkbookActivate += new AppEvents_WorkbookActivateEventHandler(this.Application_WorkbookActivate);
+			this.Application.WorkbookDeactivate += new AppEvents_WorkbookDeactivateEventHandler(this.Application_WorkbookDeactivate);
 			try
 			{
 				this.SetupAddInInfoProperty();

@@ -2,9 +2,9 @@ namespace EXLSXS.Host;
 
 internal static class InstalledAppMaintenance
 {
-    public static void Register(AddInRegistrationMode mode)
+    public static void Register(AddInRegistrationMode mode, bool allowPrerequisiteInstall = false)
     {
-        PrerequisiteChecker.EnsureReady();
+        PrerequisiteChecker.EnsureReady(allowPrerequisiteInstall);
         VstoRegistration.Register(mode);
         StartupRegistration.Register();
     }
