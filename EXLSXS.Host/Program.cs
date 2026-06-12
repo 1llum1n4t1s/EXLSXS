@@ -12,8 +12,8 @@ internal static class Program
         try
         {
             VelopackApp.Build()
-                .OnAfterInstallFastCallback(_ => InstalledAppMaintenance.Register(AddInRegistrationMode.ForceEnabled, allowPrerequisiteInstall: true))
-                .OnAfterUpdateFastCallback(_ => InstalledAppMaintenance.Register(AddInRegistrationMode.PreserveLoadBehavior))
+                .OnAfterInstallFastCallback(_ => SafeRegister(AddInRegistrationMode.ForceEnabled, allowPrerequisiteInstall: true))
+                .OnAfterUpdateFastCallback(_ => SafeRegister(AddInRegistrationMode.PreserveLoadBehavior))
                 .OnBeforeUninstallFastCallback(_ => InstalledAppMaintenance.Unregister())
                 .Run();
 
@@ -47,6 +47,21 @@ internal static class Program
         finally
         {
             Logger.Dispose();
+        }
+    }
+
+    private static void SafeRegister(AddInRegistrationMode mode, bool allowPrerequisiteInstall = false)
+    {
+        try
+        {
+            InstalledAppMaintenance.Register(mode, allowPrerequisiteInstall);
+        }
+        catch (Exception ex)
+        {
+            // インストール/更新の fast callback 内で登録が失敗しても Velopack のインストール状態は壊さない。
+            // 次回ログオン時の --update-check で Register が走り、現在の BaseDirectory の manifest パスで
+            // 自己修復される (vstolocal 絶対パスと Velopack のフォルダ入れ替えの不整合に対する保険)。
+            Logger.LogException($"Add-in registration failed during Velopack callback ({mode}).", ex);
         }
     }
 

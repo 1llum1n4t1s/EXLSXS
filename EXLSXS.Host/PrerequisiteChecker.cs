@@ -29,7 +29,7 @@ internal static class PrerequisiteChecker
 
         // インストール文脈でのみ、同梱の前提インストーラー (vsto\setup.exe) を実走させて自動修復する。
         // サイレント更新 (Windows 起動時) などでは false のまま例外を投げ、UAC を不意に出さない。
-        if (allowPrerequisiteInstall && File.Exists(bootstrapperPath))
+        if (allowPrerequisiteInstall && File.Exists(bootstrapperPath) && IsBootstrapperTrusted(bootstrapperPath))
         {
             Logger.Log($"Prerequisites missing ({string.Join(", ", missing)}). Running bundled bootstrapper: {bootstrapperPath}");
             RunBootstrapper(bootstrapperPath);
@@ -94,6 +94,25 @@ internal static class PrerequisiteChecker
             // UAC キャンセル等で失敗しても、呼び出し側が前提を再チェックして最終判断する。
             Logger.LogException("Running the bundled bootstrapper failed.", ex);
         }
+    }
+
+    private static bool IsBootstrapperTrusted(string bootstrapperPath)
+    {
+        var settings = UpdateSettings.Load();
+        // 信頼設定が無い開発ビルドでは従来どおり起動を許可する (本番 appsettings には thumbprint がある)。
+        if (!settings.HasPublisherTrustConfiguration)
+        {
+            return true;
+        }
+
+        if (UpdatePackageTrustVerifier.VerifyFileSigner(bootstrapperPath, settings, "Prerequisite bootstrapper", out var message))
+        {
+            return true;
+        }
+
+        // 署名検証に失敗した setup.exe は昇格起動しない。前提不足の例外パスへ落として手動導入を促す。
+        Logger.Log($"Refusing to run the bundled bootstrapper because its signature is not trusted: {message}", LogLevel.Warning);
+        return false;
     }
 
     private static bool IsNetFramework481OrLaterInstalled()

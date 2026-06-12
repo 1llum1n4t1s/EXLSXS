@@ -39,8 +39,11 @@ $SigningThumbprint = '6285702C9AF1FCFE3D9FE815B7F7F625508130C0'
 $SignParams      = "/n `"$CertSubjectName`" /fd SHA256 /td SHA256 /tr http://time.certum.pl"
 $WranglerVersion = '4.92.0'   # サプライチェーン対策でバージョン固定
 
-# vpk が更新パッケージ内で Authenticode 検証を要求する必須ファイル (UpdatePackageTrustVerifier と一致)
-$RequiredSignedSuffixes = @('EXLSXS.Host.exe', 'EXLSXS.Host.dll', 'EXLSXS.dll.deploy', 'EXLSXS.dll')
+# 更新パッケージ内で Authenticode 署名を要求する必須ファイル。
+# Host.exe/Host.dll/EXLSXS.dll はクライアントの UpdatePackageTrustVerifier が起動時に検証する。
+# vsto/setup.exe は前提ブートストラッパーで、PrerequisiteChecker が昇格起動の直前に署名者を検証する
+# (差し替えた setup.exe の UAC 昇格実行を防ぐ)。いずれも本証明書で署名済みであることを出荷前に保証する。
+$RequiredSignedSuffixes = @('EXLSXS.Host.exe', 'EXLSXS.Host.dll', 'EXLSXS.dll.deploy', 'EXLSXS.dll', 'setup.exe')
 
 $RepoRoot   = Split-Path -Parent $PSScriptRoot
 Set-Location $RepoRoot
@@ -97,6 +100,7 @@ Invoke-Native 'pack-velopack.ps1' {
         -VstoSigningThumbprint $SigningThumbprint `
         -VelopackSignParams $SignParams `
         -ExpectedPublisherThumbprint $SigningThumbprint `
+        -ExpectedPublisherSubject $CertSubjectName `
         -RequireVelopackSigning
 }
 
@@ -190,10 +194,12 @@ if (-not $matched) {
     throw "remote manifest が $($maxAttempts * 5) 秒以内にローカルと一致しませんでした。race 回避のため cleanup を中止します: $url"
 }
 
-# ---- 5. 旧バージョン nupkg のクリーンアップ (Aggressive 戦略) ----
-# ローカル manifest の keep set 外の「.nupkg」だけ削除。固定名ファイル
-# (Setup.exe / RELEASES* / assets.*.json / releases.*.json) は対象外で安全。
+# ---- 5. 旧バージョン nupkg のクリーンアップ (世代保持戦略) ----
+# 最新 manifest が指す nupkg に加え、R2 上の nupkg を新しい順に $KeepGenerations 世代保持する。
+# 壊れた版を配信したとき 1 つ前の安定版へロールバックできる戻り道を残すため、全削除はしない。
+# 固定名ファイル (Setup.exe / RELEASES* / assets.*.json / releases.*.json) は対象外で安全。
 Write-Host '== 旧 nupkg クリーンアップ ==' -ForegroundColor Cyan
+$KeepGenerations = 2
 $keep = @{}
 $manifests = Get-ChildItem $ReleaseDir -Filter 'releases.*.json'
 if (-not $manifests) { throw 'artifacts に releases.*.json が見つかりません' }
@@ -222,7 +228,22 @@ while ($true) {
     if (-not $cursor) { break }
 }
 
-$toDelete = $allKeys | Where-Object { $_ -like '*.nupkg' -and -not $keep.ContainsKey($_) }
+# R2 上の nupkg をバージョンごとに分類し、新しい順に $KeepGenerations 世代を保持する。
+$nupkgKeys = $allKeys | Where-Object { $_ -like '*.nupkg' }
+$versionsOnR2 = $nupkgKeys |
+    ForEach-Object { if ($_ -match 'EXLSXS-([0-9]+\.[0-9]+\.[0-9]+)-') { $matches[1] } } |
+    Select-Object -Unique |
+    Sort-Object { [version]$_ } -Descending
+$keepVersions = @{}
+foreach ($v in ($versionsOnR2 | Select-Object -First $KeepGenerations)) { $keepVersions[$v] = $true }
+if ($keepVersions.Count -gt 0) { Write-Host "  保持世代: $($keepVersions.Keys -join ', ')" }
+
+$toDelete = $nupkgKeys | Where-Object {
+    $key = $_
+    if ($keep.ContainsKey($key)) { $false }                                       # 最新 manifest が指すものは必ず保持
+    elseif ($key -match 'EXLSXS-([0-9]+\.[0-9]+\.[0-9]+)-') { -not $keepVersions.ContainsKey($matches[1]) }
+    else { $true }                                                                # バージョン抽出不能なら削除候補
+}
 if (-not $toDelete) {
     Write-Host '  ✅ 削除対象なし'
 } else {

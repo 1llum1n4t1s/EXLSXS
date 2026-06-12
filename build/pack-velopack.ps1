@@ -27,8 +27,10 @@ param(
     [Parameter(Mandatory = $false)]
     [string]$VstoSigningPfxPath,
 
+    # PFX パスワードは平文 [string] で受け取らない (プロセス引数・PSReadLine 履歴・transcription に
+    # 平文で残るため)。SecureString パラメータか、CI secret 由来の環境変数経由でのみ受け取る。
     [Parameter(Mandatory = $false)]
-    [string]$VstoSigningPfxPassword,
+    [securestring]$VstoSigningPfxPassword,
 
     [Parameter(Mandatory = $false)]
     [string]$VstoSigningThumbprint,
@@ -221,16 +223,43 @@ function Ensure-VelopackCli {
         $env:PATH = "$env:PATH;$toolsPath"
     }
 
+    # vpk CLI は Velopack ライブラリ (EXLSXS.Host.csproj の PackageReference) と同一バージョンへ固定する。
+    # 無固定取得 (dotnet tool install --global vpk) だと、署名・パッケージングを担う最特権ツールが
+    # NuGet 侵害や予期せぬ最新版で差し替わるサプライチェーン穴になる。ライブラリ側と版を揃えて再現性を保つ。
+    $hostProjectContent = Get-Content -LiteralPath $hostProject -Raw
+    if ($hostProjectContent -notmatch '<PackageReference\s+Include="Velopack"\s+Version="([^"]+)"') {
+        throw "EXLSXS.Host.csproj から Velopack の PackageReference バージョンを取得できませんでした"
+    }
+    $vpkVersion = $matches[1]
+
+    $installedVersion = $null
     $command = Get-Command vpk -ErrorAction SilentlyContinue
-    if ($command -eq $null) {
-        dotnet tool install --global vpk
+    if ($command -ne $null) {
+        $listLine = (dotnet tool list --global 2>$null) | Where-Object { $_ -match '^\s*vpk\s' } | Select-Object -First 1
+        if ($listLine -and ($listLine -match '^\s*vpk\s+(\S+)')) {
+            $installedVersion = $matches[1]
+        }
+    }
+
+    if ($installedVersion -eq $vpkVersion) {
+        return
+    }
+
+    if ($command -ne $null) {
+        dotnet tool update --global vpk --version $vpkVersion
+    }
+    else {
+        dotnet tool install --global vpk --version $vpkVersion
+    }
+    if ($LASTEXITCODE -ne 0) {
+        throw "vpk CLI ($vpkVersion) のインストール/更新に失敗しました (exit $LASTEXITCODE)"
     }
 }
 
 function Import-VstoSigningCertificate {
     param(
         [Parameter(Mandatory = $false)][AllowEmptyString()][string]$PfxPath,
-        [Parameter(Mandatory = $false)][AllowEmptyString()][string]$PfxPassword,
+        [Parameter(Mandatory = $false)][securestring]$PfxPassword,
         [Parameter(Mandatory = $false)][AllowEmptyString()][string]$PfxBase64
     )
 
@@ -249,12 +278,11 @@ function Import-VstoSigningCertificate {
         throw "VSTO signing PFX was not found: $PfxPath"
     }
 
-    if ([string]::IsNullOrWhiteSpace($PfxPassword)) {
+    if ($null -eq $PfxPassword) {
         throw "VSTO signing PFX password is required when a PFX is supplied."
     }
 
-    $securePassword = ConvertTo-SecureString -String $PfxPassword -AsPlainText -Force
-    $certificate = Import-PfxCertificate -FilePath $PfxPath -CertStoreLocation Cert:\CurrentUser\My -Password $securePassword
+    $certificate = Import-PfxCertificate -FilePath $PfxPath -CertStoreLocation Cert:\CurrentUser\My -Password $PfxPassword
     if ($certificate -eq $null) {
         throw "VSTO signing certificate could not be imported."
     }
@@ -314,7 +342,14 @@ Write-Host "  UpdateSource: $UpdateSource"
 
 Reset-Directory -Path $artifactsDir
 $VstoSigningPfxPath = Get-ValueOrEnvironment -Value $VstoSigningPfxPath -EnvironmentName "EXLSXS_VSTO_SIGNING_PFX_PATH"
-$VstoSigningPfxPassword = Get-ValueOrEnvironment -Value $VstoSigningPfxPassword -EnvironmentName "EXLSXS_VSTO_SIGNING_PFX_PASSWORD"
+# PFX パスワードはパラメータ未指定時のみ環境変数 (CI secret マスク前提) から読み、即 SecureString 化する。
+if ($null -eq $VstoSigningPfxPassword) {
+    $pfxPasswordFromEnv = [System.Environment]::GetEnvironmentVariable("EXLSXS_VSTO_SIGNING_PFX_PASSWORD")
+    if (-not [string]::IsNullOrWhiteSpace($pfxPasswordFromEnv)) {
+        $VstoSigningPfxPassword = ConvertTo-SecureString -String $pfxPasswordFromEnv -AsPlainText -Force
+        $pfxPasswordFromEnv = $null
+    }
+}
 $VstoSigningThumbprint = Get-ValueOrEnvironment -Value $VstoSigningThumbprint -EnvironmentName "EXLSXS_VSTO_SIGNING_THUMBPRINT"
 $VelopackSignParams = Get-ValueOrEnvironment -Value $VelopackSignParams -EnvironmentName "EXLSXS_VELOPACK_SIGN_PARAMS"
 $VelopackAzureTrustedSignFile = Get-ValueOrEnvironment -Value $VelopackAzureTrustedSignFile -EnvironmentName "EXLSXS_VELOPACK_AZURE_TRUSTED_SIGN_FILE"
@@ -448,6 +483,19 @@ if (-not (Test-Path -LiteralPath $flatDeploymentManifest)) {
 }
 Copy-Item -Path $flatDeploymentManifest -Destination (Join-Path $vstoStagingDir "EXLSXS.vsto") -Force
 Copy-Item -Path (Join-Path $vstoPublishDir "setup.exe") -Destination $vstoStagingDir -Force
+
+# 前提条件ブートストラッパー (vsto\setup.exe) も Authenticode 署名する。
+# vpk は vsto\ サブフォルダを署名対象から外すため、ここで署名しないと setup.exe が未署名のまま残り、
+# クライアントが起動時 (PrerequisiteChecker) に署名者を検証できず、差し替えられた setup.exe が
+# UAC 昇格で実行される余地を残す。本証明書で署名しておけば起動時検証を通過する。
+$stagedSetupExe = Join-Path $vstoStagingDir "setup.exe"
+if (-not [string]::IsNullOrWhiteSpace($VelopackSignParams)) {
+    if (-not (Test-Path -LiteralPath $stagedSetupExe)) {
+        throw "Bootstrapper setup.exe was not found for signing: $stagedSetupExe"
+    }
+    Write-Host "Authenticode-signing bootstrapper: $stagedSetupExe"
+    Invoke-SignTool -SignParams $VelopackSignParams -FilePath $stagedSetupExe
+}
 
 $settings = [ordered]@{
     Update = [ordered]@{

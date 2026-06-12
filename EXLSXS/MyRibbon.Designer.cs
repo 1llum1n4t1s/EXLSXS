@@ -73,9 +73,9 @@ namespace EXLSXS
 			// Finish
 			// 
 			this.Finish.ControlSize = Microsoft.Office.Core.RibbonControlSize.RibbonControlSizeLarge;
+			this.Finish.Image = global::EXLSXS.Properties.Resources.RibbonFinish_32x32;
 			this.Finish.Label = "倍率と選択位置を揃える";
 			this.Finish.Name = "Finish";
-			this.Finish.OfficeImageId = "CreateQueryFromWizard";
 			this.Finish.ScreenTip = "倍率と選択位置を揃える";
 			this.Finish.ShowImage = true;
 			this.Finish.SuperTip = "すべてのシートを「標準ビュー」「倍率100%」「A1セル選択」にしてから先頭のシートをアクティブにします。";
