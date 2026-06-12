@@ -109,7 +109,7 @@ internal static class UpdateChecker
         return new UpdateManager(settings.Source, options);
     }
 
-    private static bool ShouldUseGithubSource(UpdateSettings settings)
+    internal static bool ShouldUseGithubSource(UpdateSettings settings)
     {
         if (settings.SourceKind == UpdateSourceKind.Github)
         {

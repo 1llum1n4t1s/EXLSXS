@@ -130,6 +130,17 @@ namespace EXLSXS
 			bool restoreScreenUpdating = false;
 			bool previousScreenUpdating = true;
 
+			// 仕上げ処理は全シートを順に Activate するため、完了後にユーザーが見ていたシートへ
+			// 戻せるよう、開始時のアクティブシートを退避しておく。
+			object originalActiveSheet = null;
+			try
+			{
+				originalActiveSheet = application.ActiveSheet;
+			}
+			catch
+			{
+			}
+
 			try
 			{
 				previousScreenUpdating = application.ScreenUpdating;
@@ -191,6 +202,17 @@ namespace EXLSXS
 			}
 			finally
 			{
+				if (originalActiveSheet is Microsoft.Office.Interop.Excel._Worksheet originalWorksheet)
+				{
+					try
+					{
+						originalWorksheet.Activate();
+					}
+					catch
+					{
+					}
+				}
+
 				if (restoreScreenUpdating)
 				{
 					try

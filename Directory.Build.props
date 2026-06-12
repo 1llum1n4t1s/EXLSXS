@@ -6,6 +6,6 @@
            - EXLSXS (VSTO)      : ApplicationVersion = $(Version).0、AssemblyVersion も同値を生成
            - Velopack 配信版     : pack-velopack.ps1 がこの <Version> を読む
          /vava もこの 1 行だけ更新すれば良い。4 パートが要る箇所は $(Version).0 で導出する。 -->
-    <Version>1.0.1</Version>
+    <Version>1.0.2</Version>
   </PropertyGroup>
 </Project>

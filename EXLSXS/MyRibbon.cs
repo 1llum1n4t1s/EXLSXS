@@ -61,6 +61,9 @@ namespace EXLSXS
 
 		private void SetupFontBox()
 		{
+			// フォントプレビュー画像の生成 (フォント数 × GDI+ Bitmap 描画) はリボン Load を
+			// 数百ms〜1秒ブロックし、生成した Bitmap が UI 生存中ずっと常駐する。起動を軽くするため
+			// 画像は付けず、フォント名ラベルのみで一覧する (フォント選択はラベルで完結する)。
 			foreach (FontFamily fontFamily in new InstalledFontCollection().Families)
 			{
 				if (fontFamily.IsStyleAvailable(FontStyle.Regular)
@@ -69,10 +72,8 @@ namespace EXLSXS
 					&& fontFamily.IsStyleAvailable(FontStyle.Strikeout)
 					&& fontFamily.IsStyleAvailable(FontStyle.Underline))
 				{
-					Bitmap image = CreateFontPreviewImage(fontFamily);
 					RibbonDropDownItem item = Globals.Factory.GetRibbonFactory().CreateRibbonDropDownItem();
 					item.Label = fontFamily.Name;
-					item.Image = image;
 					FontBox.Items.Add(item);
 				}
 
@@ -90,19 +91,6 @@ namespace EXLSXS
 			{
 				FontBox.SelectedItemIndex = 0;
 			}
-		}
-
-		private static Bitmap CreateFontPreviewImage(FontFamily fontFamily)
-		{
-			Bitmap image = new Bitmap(200, 20);
-			using (Graphics graphics = Graphics.FromImage(image))
-			using (Font font = new Font(fontFamily, 16f, GraphicsUnit.Pixel))
-			{
-				graphics.TextRenderingHint = TextRenderingHint.AntiAliasGridFit;
-				TextRenderer.DrawText(graphics, fontFamily.Name, font, Point.Empty, SystemColors.MenuText);
-			}
-
-			return image;
 		}
 
 		private void SetupWindowViewBox()

@@ -1,0 +1,77 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="title desc">
+  <title id="title">EXLSXS app icon</title>
+  <desc id="desc">A stacked spreadsheet grid with the top-left cell selected and a completion check mark.</desc>
+  <defs>
+    <linearGradient id="bg" x1="136" y1="92" x2="884" y2="932" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#1fd17a"/>
+      <stop offset="0.46" stop-color="#118a55"/>
+      <stop offset="1" stop-color="#06442e"/>
+    </linearGradient>
+    <linearGradient id="sheet" x1="250" y1="178" x2="724" y2="816" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#dff8ec"/>
+    </linearGradient>
+    <linearGradient id="select" x1="274" y1="236" x2="402" y2="360" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#fff276"/>
+      <stop offset="1" stop-color="#f4b83f"/>
+    </linearGradient>
+    <linearGradient id="badge" x1="612" y1="590" x2="826" y2="822" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#27dfb2"/>
+      <stop offset="1" stop-color="#0a735b"/>
+    </linearGradient>
+    <filter id="softShadow" x="-20%" y="-20%" width="140%" height="150%">
+      <feDropShadow dx="0" dy="34" stdDeviation="36" flood-color="#022419" flood-opacity="0.46"/>
+    </filter>
+    <filter id="sheetShadow" x="-20%" y="-20%" width="140%" height="150%">
+      <feDropShadow dx="0" dy="20" stdDeviation="18" flood-color="#063322" flood-opacity="0.28"/>
+    </filter>
+  </defs>
+
+  <rect x="80" y="80" width="864" height="864" rx="196" fill="url(#bg)" filter="url(#softShadow)"/>
+  <path d="M156 785 844 178v512c0 86-70 156-156 156H156z" fill="#043220" opacity="0.18"/>
+  <path d="M155 225c78-88 205-129 358-121 166 9 288 70 356 185" fill="none" stroke="#8ff3bd" stroke-width="36" stroke-linecap="round" opacity="0.18"/>
+
+  <g filter="url(#sheetShadow)">
+    <rect x="292" y="210" width="474" height="592" rx="54" fill="#b8efd0" opacity="0.5"/>
+    <rect x="246" y="168" width="500" height="616" rx="56" fill="#d6f6e6" opacity="0.8"/>
+    <rect x="206" y="132" width="526" height="640" rx="58" fill="url(#sheet)"/>
+  </g>
+
+  <clipPath id="sheetClip">
+    <rect x="206" y="132" width="526" height="640" rx="58"/>
+  </clipPath>
+  <g clip-path="url(#sheetClip)">
+    <rect x="206" y="132" width="526" height="108" fill="#0f8450"/>
+    <rect x="240" y="174" width="92" height="26" rx="13" fill="#ddffed" opacity="0.9"/>
+    <rect x="354" y="174" width="250" height="26" rx="13" fill="#ddffed" opacity="0.34"/>
+
+    <g stroke="#8eddb5" stroke-width="10" opacity="0.78">
+      <path d="M206 240h526"/>
+      <path d="M206 372h526"/>
+      <path d="M206 504h526"/>
+      <path d="M206 636h526"/>
+      <path d="M338 132v640"/>
+      <path d="M470 132v640"/>
+      <path d="M602 132v640"/>
+    </g>
+
+    <rect x="234" y="266" width="132" height="106" rx="22" fill="url(#select)"/>
+    <path d="M256 310v-22h22M344 288h-22M256 330v22h22M344 352h-22" fill="none" stroke="#07533a" stroke-width="14" stroke-linecap="round" stroke-linejoin="round" opacity="0.86"/>
+    <circle cx="300" cy="319" r="12" fill="#07533a" opacity="0.92"/>
+
+    <g fill="#1ba668" opacity="0.12">
+      <rect x="366" y="372" width="104" height="132"/>
+      <rect x="470" y="504" width="132" height="132"/>
+      <rect x="602" y="240" width="130" height="132"/>
+    </g>
+  </g>
+
+  <rect x="206" y="132" width="526" height="640" rx="58" fill="none" stroke="#eafff4" stroke-width="14" opacity="0.84"/>
+  <rect x="206" y="132" width="526" height="640" rx="58" fill="none" stroke="#05432d" stroke-width="8" opacity="0.26"/>
+
+  <g>
+    <circle cx="730" cy="722" r="176" fill="#043421" opacity="0.32"/>
+    <circle cx="718" cy="704" r="168" fill="url(#badge)" stroke="#e7fff2" stroke-width="16"/>
+    <path d="M820 806 640 626M640 626h164M640 626v164" fill="none" stroke="#ffffff" stroke-width="68" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+</svg>
