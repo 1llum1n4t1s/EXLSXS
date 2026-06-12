@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="EXLSXS.Host/EXLSXS.Host.csproj" />
+  <Project Path="EXLSXS/EXLSXS.csproj" />
+</Solution>

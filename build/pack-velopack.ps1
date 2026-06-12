@@ -163,6 +163,40 @@ function Get-MSBuildPath {
     return "MSBuild.exe"
 }
 
+function Get-SignToolPath {
+    $kitsRoot = Join-Path ${env:ProgramFiles(x86)} "Windows Kits\10\bin"
+    if (Test-Path -LiteralPath $kitsRoot) {
+        $signtool = Get-ChildItem -LiteralPath $kitsRoot -Directory -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -match '^10\.' } |
+            Sort-Object Name -Descending |
+            ForEach-Object { Join-Path $_.FullName "x64\signtool.exe" } |
+            Where-Object { Test-Path -LiteralPath $_ } |
+            Select-Object -First 1
+        if ($signtool) { return $signtool }
+    }
+
+    $command = Get-Command signtool.exe -ErrorAction SilentlyContinue
+    if ($command -ne $null) { return $command.Source }
+
+    throw "signtool.exe was not found. Install the Windows 10/11 SDK to enable Authenticode signing."
+}
+
+function Invoke-SignTool {
+    param(
+        [Parameter(Mandatory = $true)][string]$SignParams,
+        [Parameter(Mandatory = $true)][string]$FilePath
+    )
+
+    $signtool = Get-SignToolPath
+    # VelopackSignParams (例: /n "..." /fd SHA256 /td SHA256 /tr http://time.certum.pl) を
+    # そのまま signtool sign の引数へ展開する。クォート保持のため単一引数文字列で渡す。
+    $argumentList = "sign $SignParams `"$FilePath`""
+    $process = Start-Process -FilePath $signtool -ArgumentList $argumentList -NoNewWindow -Wait -PassThru
+    if ($process.ExitCode -ne 0) {
+        throw "signtool sign failed for '$FilePath' (exit $($process.ExitCode))."
+    }
+}
+
 function Get-GitHubRemoteSource {
     $remoteUrl = git -C $root remote get-url origin 2>$null
     if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($remoteUrl)) {
@@ -182,7 +216,6 @@ function Get-GitHubRemoteSource {
 }
 
 function Ensure-VelopackCli {
-    $desiredVersion = "0.0.1369-g1d5c984"
     $toolsPath = Join-Path $env:USERPROFILE ".dotnet\tools"
     if ((Test-Path -LiteralPath $toolsPath) -and ($env:PATH -notlike "*$toolsPath*")) {
         $env:PATH = "$env:PATH;$toolsPath"
@@ -190,20 +223,7 @@ function Ensure-VelopackCli {
 
     $command = Get-Command vpk -ErrorAction SilentlyContinue
     if ($command -eq $null) {
-        dotnet tool install --global vpk --version $desiredVersion
-        return
-    }
-
-    $installedVersion = $null
-    foreach ($line in (dotnet tool list --global)) {
-        if ($line -match '^\s*vpk\s+([^\s]+)\s+') {
-            $installedVersion = $matches[1]
-            break
-        }
-    }
-
-    if ($installedVersion -ne $desiredVersion) {
-        dotnet tool update --global vpk --version $desiredVersion
+        dotnet tool install --global vpk
     }
 }
 
@@ -333,17 +353,45 @@ New-Item -ItemType Directory -Path $vstoPublishDir -Force | Out-Null
 
 $msbuild = Get-MSBuildPath
 $vstoPublishDirWithSlash = $vstoPublishDir.TrimEnd('\') + '\'
-$msbuildArgs = @(
+
+# 1. VSTO アセンブリをビルドする (publish はまだ行わない)。
+$buildArgs = @(
     $vstoProject,
-    "/t:Restore,PublishOnly",
+    "/t:Restore,Rebuild",
+    "/p:Configuration=$Configuration",
+    "/p:Platform=AnyCPU",
+    "/p:ManifestCertificateThumbprint=$VstoSigningThumbprint"
+)
+& $msbuild @buildArgs
+if ($LASTEXITCODE -ne 0) {
+    throw "VSTO build failed with exit code $LASTEXITCODE"
+}
+
+# 2. publish 前に VSTO アセンブリ本体を Authenticode 署名する。
+#    vpk は vsto\ サブフォルダを署名対象から外すため、ここで署名しておかないと
+#    更新パッケージ内の EXLSXS.dll(.deploy) が未署名になりクライアントの信頼検証が失敗する。
+#    署名済み DLL から .deploy と ClickOnce application manifest が生成されるので、
+#    Authenticode 署名と manifest ハッシュの両方が整合する。
+$vstoAssembly = Join-Path (Split-Path -Parent $vstoProject) "bin\$Configuration\EXLSXS.dll"
+if (-not [string]::IsNullOrWhiteSpace($VelopackSignParams)) {
+    if (-not (Test-Path -LiteralPath $vstoAssembly)) {
+        throw "VSTO assembly was not found for signing: $vstoAssembly"
+    }
+    Write-Host "Authenticode-signing VSTO assembly: $vstoAssembly"
+    Invoke-SignTool -SignParams $VelopackSignParams -FilePath $vstoAssembly
+}
+
+# 3. 署名済み DLL を publish する (PublishOnly は Build を再実行せず bin の成果物を使う)。
+$publishArgs = @(
+    $vstoProject,
+    "/t:PublishOnly",
     "/p:Configuration=$Configuration",
     "/p:Platform=AnyCPU",
     "/p:PublishDir=$vstoPublishDirWithSlash",
     "/p:PublishUrl=$vstoPublishDirWithSlash",
     "/p:ManifestCertificateThumbprint=$VstoSigningThumbprint"
 )
-& $msbuild @msbuildArgs
-
+& $msbuild @publishArgs
 if ($LASTEXITCODE -ne 0) {
     throw "VSTO publish failed with exit code $LASTEXITCODE"
 }
