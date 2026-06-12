@@ -12,7 +12,7 @@ internal static class Program
         try
         {
             VelopackApp.Build()
-                .OnAfterInstallFastCallback(_ => InstalledAppMaintenance.Register(AddInRegistrationMode.ForceEnabled))
+                .OnAfterInstallFastCallback(_ => InstalledAppMaintenance.Register(AddInRegistrationMode.ForceEnabled, allowPrerequisiteInstall: true))
                 .OnAfterUpdateFastCallback(_ => InstalledAppMaintenance.Register(AddInRegistrationMode.PreserveLoadBehavior))
                 .OnBeforeUninstallFastCallback(_ => InstalledAppMaintenance.Unregister())
                 .Run();
@@ -25,7 +25,7 @@ internal static class Program
 
             if (HasArg(args, "--register"))
             {
-                InstalledAppMaintenance.Register(AddInRegistrationMode.ForceEnabled);
+                InstalledAppMaintenance.Register(AddInRegistrationMode.ForceEnabled, allowPrerequisiteInstall: true);
                 return 0;
             }
 

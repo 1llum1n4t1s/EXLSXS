@@ -282,9 +282,11 @@ function Assert-CertificateInCurrentUserStore {
 }
 
 if ([string]::IsNullOrWhiteSpace($Version)) {
-    $Version = Get-ProjectValue -Path $vstoProject -Name "ApplicationVersion"
+    # バージョンの単一ソースはリポジトリ直下の Directory.Build.props の <Version>。
+    $directoryBuildProps = Join-Path $root "Directory.Build.props"
+    $Version = Get-ProjectValue -Path $directoryBuildProps -Name "Version"
     if ([string]::IsNullOrWhiteSpace($Version)) {
-        throw "ApplicationVersion was not found in $vstoProject"
+        throw "Version was not found in $directoryBuildProps"
     }
 }
 
@@ -349,6 +351,11 @@ if ($RequireVelopackSigning -and [string]::IsNullOrWhiteSpace($VelopackSignParam
     throw "Velopack signing is required, but neither EXLSXS_VELOPACK_SIGN_PARAMS nor EXLSXS_VELOPACK_AZURE_TRUSTED_SIGN_FILE was supplied."
 }
 
+# publish 成果物は毎回クリーンに作り直す。前回の .deploy 等の残骸が残ると、
+# 増分 publish で混ざってマニフェスト記載の論理名と物理ファイル名がずれる原因になる。
+if (Test-Path $vstoPublishDir) {
+    Remove-Item -Path $vstoPublishDir -Recurse -Force
+}
 New-Item -ItemType Directory -Path $vstoPublishDir -Force | Out-Null
 
 $msbuild = Get-MSBuildPath
@@ -389,6 +396,11 @@ $publishArgs = @(
     "/p:Platform=AnyCPU",
     "/p:PublishDir=$vstoPublishDirWithSlash",
     "/p:PublishUrl=$vstoPublishDirWithSlash",
+    # vstolocal でその場ロードするため .deploy 拡張子を付けない。csproj の PropertyGroup 値は
+    # VSTO の publish ターゲットに上書きされるので、ターゲットから変更不可なグローバルプロパティ
+    # (コマンドライン /p:) として渡す必要がある。これが無いと EXLSXS.dll.deploy が出力され、
+    # vstolocal ロードが論理名 EXLSXS.dll を見つけられず FileNotFound でアドインが読み込めない。
+    "/p:MapFileExtensions=false",
     "/p:ManifestCertificateThumbprint=$VstoSigningThumbprint"
 )
 & $msbuild @publishArgs
@@ -416,7 +428,26 @@ Copy-Item -Path (Join-Path $hostPublishDir "*") -Destination $stagingDir -Recurs
 
 $vstoStagingDir = Join-Path $stagingDir "vsto"
 New-Item -ItemType Directory -Path $vstoStagingDir -Force | Out-Null
-Copy-Item -Path (Join-Path $vstoPublishDir "*") -Destination $vstoStagingDir -Recurse -Force
+
+# vstolocal 登録は「.vsto と同じフォルダ」を AppBase にするため、staging は ClickOnce の
+# ネスト構成 (Application Files\<name>_<ver>\) ではなく、.vsto / .dll.manifest / EXLSXS.dll /
+# 依存 DLL を全部同一フォルダに並べるフラット構成にする (動作実績のある Data Streamer と同じ)。
+# ネストのまま親 .vsto を登録すると Assembly.Load("EXLSXS") がサブフォルダを探せず
+# FileNotFoundException でアドインが読み込めない (2026-06 実機で確認)。
+#   - publish 内側フォルダ: 署名済み EXLSXS.dll + フラット参照の EXLSXS.dll.manifest + 依存 DLL
+#   - bin\Release の EXLSXS.vsto: codebase がフラット参照 (publish ルートの .vsto はネスト参照なので使わない)
+#   - setup.exe: 前提条件ブートストラッパー (publish ルートから)
+$vstoInnerDir = Get-ChildItem -Path (Join-Path $vstoPublishDir "Application Files") -Directory | Select-Object -First 1
+if ($null -eq $vstoInnerDir) {
+    throw "VSTO publish output did not contain an 'Application Files' folder: $vstoPublishDir"
+}
+Copy-Item -Path (Join-Path $vstoInnerDir.FullName "*") -Destination $vstoStagingDir -Force
+$flatDeploymentManifest = Join-Path (Split-Path -Parent $vstoProject) "bin\$Configuration\EXLSXS.vsto"
+if (-not (Test-Path -LiteralPath $flatDeploymentManifest)) {
+    throw "Flat deployment manifest was not found: $flatDeploymentManifest"
+}
+Copy-Item -Path $flatDeploymentManifest -Destination (Join-Path $vstoStagingDir "EXLSXS.vsto") -Force
+Copy-Item -Path (Join-Path $vstoPublishDir "setup.exe") -Destination $vstoStagingDir -Force
 
 $settings = [ordered]@{
     Update = [ordered]@{

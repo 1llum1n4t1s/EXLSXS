@@ -8,7 +8,7 @@
     <RuntimeIdentifier Condition="'$(RuntimeIdentifier)' == ''">win-x64</RuntimeIdentifier>
     <AssemblyName>EXLSXS.Host</AssemblyName>
     <RootNamespace>EXLSXS.Host</RootNamespace>
-    <Version>1.2.0</Version>
+    <!-- バージョンはリポジトリ直下の Directory.Build.props の <Version> から継承する。 -->
     <AssemblyTitle>EXLSXS Host</AssemblyTitle>
     <AssemblyDescription>Installer and updater host for EXLSXS VSTO add-in.</AssemblyDescription>
     <AssemblyCompany>EXLSXS</AssemblyCompany>

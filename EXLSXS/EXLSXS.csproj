@@ -15,12 +15,17 @@
     <PublisherName>EXLSXS</PublisherName>
     <FriendlyName>EXLSXS</FriendlyName>
     <OfficeApplicationDescription>表示倍率やセルの選択位置を整える Excel アドインです。</OfficeApplicationDescription>
-    <ApplicationVersion>1.0.0.0</ApplicationVersion>
+    <!-- ClickOnce は 4 パート版を要求するため、単一ソース $(Version) (SemVer 3 パート) から導出する。 -->
+    <ApplicationVersion>$(Version).0</ApplicationVersion>
     <BootstrapperEnabled>true</BootstrapperEnabled>
     <BootstrapperComponentsLocation>HomeSite</BootstrapperComponentsLocation>
     <IsWebBootstrapper>false</IsWebBootstrapper>
     <PublishDir Condition="'$(PublishDir)' == ''">$(MSBuildProjectDirectory)\bin\$(Configuration)\vsto-publish\</PublishDir>
     <PublishUrl Condition="'$(PublishUrl)' == ''">$(PublishDir)</PublishUrl>
+    <!-- vstolocal でその場ロードするため、publish 成果物に .deploy 拡張子を付けない。
+         付けると物理ファイルが EXLSXS.dll.deploy になり、マニフェストの論理名 EXLSXS.dll を
+         vstolocal ロードが見つけられず FileNotFound でアドインが読み込めなくなる。 -->
+    <MapFileExtensions>false</MapFileExtensions>
     <UpdateEnabled>false</UpdateEnabled>
     <SignManifests>true</SignManifests>
     <ManifestCertificateThumbprint Condition="'$(ManifestCertificateThumbprint)' == ''">6285702C9AF1FCFE3D9FE815B7F7F625508130C0</ManifestCertificateThumbprint>
@@ -153,4 +158,25 @@
     <VSToolsPath Condition="'$(VSToolsPath)' == ''">$(MSBuildExtensionsPath32)\Microsoft\VisualStudio\v$(VisualStudioVersion)</VSToolsPath>
   </PropertyGroup>
   <Import Project="$(VSToolsPath)\OfficeTools\Microsoft.VisualStudio.Tools.Office.targets" Condition="'$(VSToolsPath)' != '' And Exists('$(VSToolsPath)\OfficeTools\Microsoft.VisualStudio.Tools.Office.targets')" />
+  <!-- AssemblyVersion / AssemblyFileVersion は AssemblyInfo.cs に固定値を持たず、
+       単一ソース $(Version) (Directory.Build.props) から 4 パート版を生成する。
+       これで VSTO アセンブリ ID も他の版数と一致し、定義箇所が 1 つに集約される。 -->
+  <Target Name="GenerateVersionAttributes" BeforeTargets="CoreCompile">
+    <PropertyGroup>
+      <AssemblyVersionFull>$(Version).0</AssemblyVersionFull>
+      <GeneratedVersionFile>$(IntermediateOutputPath)AssemblyVersionInfo.g.cs</GeneratedVersionFile>
+    </PropertyGroup>
+    <ItemGroup>
+      <AssemblyAttribute Include="System.Reflection.AssemblyVersionAttribute">
+        <_Parameter1>$(AssemblyVersionFull)</_Parameter1>
+      </AssemblyAttribute>
+      <AssemblyAttribute Include="System.Reflection.AssemblyFileVersionAttribute">
+        <_Parameter1>$(AssemblyVersionFull)</_Parameter1>
+      </AssemblyAttribute>
+    </ItemGroup>
+    <MakeDir Directories="$(IntermediateOutputPath)" />
+    <WriteCodeFragment Language="C#" OutputFile="$(GeneratedVersionFile)" AssemblyAttributes="@(AssemblyAttribute)">
+      <Output TaskParameter="OutputFile" ItemName="Compile" />
+    </WriteCodeFragment>
+  </Target>
 </Project>
