@@ -15,7 +15,7 @@
     <PublisherName>EXLSXS</PublisherName>
     <FriendlyName>EXLSXS</FriendlyName>
     <OfficeApplicationDescription>表示倍率やセルの選択位置を整える Excel アドインです。</OfficeApplicationDescription>
-    <ApplicationVersion>1.2.0.0</ApplicationVersion>
+    <ApplicationVersion>1.0.0.0</ApplicationVersion>
     <BootstrapperEnabled>true</BootstrapperEnabled>
     <BootstrapperComponentsLocation>HomeSite</BootstrapperComponentsLocation>
     <IsWebBootstrapper>false</IsWebBootstrapper>
@@ -23,15 +23,17 @@
     <PublishUrl Condition="'$(PublishUrl)' == ''">$(PublishDir)</PublishUrl>
     <UpdateEnabled>false</UpdateEnabled>
     <SignManifests>true</SignManifests>
-    <ManifestCertificateThumbprint Condition="'$(ManifestCertificateThumbprint)' == ''">C6E5A15433808C251884EA0F55AC817D14EB6D81</ManifestCertificateThumbprint>
+    <ManifestCertificateThumbprint Condition="'$(ManifestCertificateThumbprint)' == ''">6285702C9AF1FCFE3D9FE815B7F7F625508130C0</ManifestCertificateThumbprint>
     <TargetFrameworkVersion>v4.8.1</TargetFrameworkVersion>
     <TargetFrameworkProfile>
     </TargetFrameworkProfile>
     <FileAlignment>512</FileAlignment>
     <ResolveComReferenceSilent>true</ResolveComReferenceSilent>
     <NuGetPackageRoot Condition="'$(NuGetPackageRoot)' == ''">$(UserProfile)\.nuget\packages\</NuGetPackageRoot>
-    <TargetFrameworkRootPath Condition="'$(TargetFrameworkVersion)' == 'v4.8.1' And Exists('$(NuGetPackageRoot)microsoft.netframework.referenceassemblies.net481\1.0.3\build\.NETFramework\v4.8.1')">$(NuGetPackageRoot)microsoft.netframework.referenceassemblies.net481\1.0.3\build\</TargetFrameworkRootPath>
-    <EnableFrameworkPathOverride Condition="'$(TargetFrameworkVersion)' == 'v4.8.1' And Exists('$(NuGetPackageRoot)microsoft.netframework.referenceassemblies.net481\1.0.3\build\.NETFramework\v4.8.1')">false</EnableFrameworkPathOverride>
+    <!-- v4.8.1 の Targeting Pack 未導入環境では NuGet の参照アセンブリパッケージで解決する。
+         FrameworkPathOverride 方式は Microsoft.NETFramework.ReferenceAssemblies の標準動作で、Targeting Pack の有無に依存しない。 -->
+    <FrameworkPathOverride Condition="'$(TargetFrameworkVersion)' == 'v4.8.1' And '$(FrameworkPathOverride)' == '' And Exists('$(NuGetPackageRoot)microsoft.netframework.referenceassemblies.net481\1.0.3\build\.NETFramework\v4.8.1')">$(NuGetPackageRoot)microsoft.netframework.referenceassemblies.net481\1.0.3\build\.NETFramework\v4.8.1\</FrameworkPathOverride>
+    <EnableFrameworkPathOverride Condition="'$(TargetFrameworkVersion)' == 'v4.8.1' And '$(FrameworkPathOverride)' != ''">true</EnableFrameworkPathOverride>
   </PropertyGroup>
   <PropertyGroup>
     <OfficeApplication>Excel</OfficeApplication>
