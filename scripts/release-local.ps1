@@ -11,7 +11,7 @@
 #
 # 前提:
 #   - SimplySign Desktop が接続済み (証明書が CurrentUser\My に見えていること)
-#   - EXLSXS/EXLSXS.csproj の <ApplicationVersion> がリリースしたいバージョンであること (/vava 済み)
+#   - Directory.Build.props の <Version> がリリースしたいバージョンであること (/vava 済み)
 #   - C:\Users\IMT\dev\Secret\secrets.json に cloudflare.api_token があること
 #
 # 使い方:
@@ -63,11 +63,11 @@ if ($env:PATH -notlike "*$vsInstallerDir*") { $env:PATH = "$env:PATH;$vsInstalle
 # vpk (dotnet tool) は .NET 9 ランタイム要求だがローカルは 10 のみ → ロールフォワード
 $env:DOTNET_ROLL_FORWARD = 'Major'
 
-# バージョンは csproj の <ApplicationVersion> から取得 (表示・確認用)。
-# 旧形式 csproj は MSBuild 2003 の xmlns を持つため local-name() で namespace 非依存に拾う。
-$versionNode = ([xml](Get-Content 'EXLSXS\EXLSXS.csproj' -Raw)).SelectSingleNode("//*[local-name()='ApplicationVersion']")
+# バージョンは Directory.Build.props の <Version> から取得 (表示・確認用)。
+# csproj の ApplicationVersion は "$(Version).0" の導出式になったため、生テキストでは読めない。
+$versionNode = ([xml](Get-Content 'Directory.Build.props' -Raw)).SelectSingleNode("//*[local-name()='Version']")
 $version = if ($versionNode) { $versionNode.InnerText.Trim() } else { $null }
-if (-not $version) { throw 'EXLSXS.csproj から <ApplicationVersion> を取得できませんでした' }
+if (-not $version) { throw 'Directory.Build.props から <Version> を取得できませんでした' }
 Write-Host "バージョン: $version"
 
 # SimplySign 接続確認 (証明書が見えなければ署名できないので最初に落とす)
