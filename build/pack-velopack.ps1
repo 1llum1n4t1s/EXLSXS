@@ -223,14 +223,12 @@ function Ensure-VelopackCli {
         $env:PATH = "$env:PATH;$toolsPath"
     }
 
-    # vpk CLI は Velopack ライブラリ (EXLSXS.Host.csproj の PackageReference) と同一バージョンへ固定する。
-    # 無固定取得 (dotnet tool install --global vpk) だと、署名・パッケージングを担う最特権ツールが
-    # NuGet 侵害や予期せぬ最新版で差し替わるサプライチェーン穴になる。ライブラリ側と版を揃えて再現性を保つ。
-    $hostProjectContent = Get-Content -LiteralPath $hostProject -Raw
-    if ($hostProjectContent -notmatch '<PackageReference\s+Include="Velopack"\s+Version="([^"]+)"') {
-        throw "EXLSXS.Host.csproj から Velopack の PackageReference バージョンを取得できませんでした"
-    }
-    $vpkVersion = $matches[1]
+    # vpk CLI は動作確認済みの固定バージョンを使う。無固定取得 (dotnet tool install --global vpk) だと
+    # 署名・パッケージングを担う最特権ツールが NuGet 侵害や予期せぬ最新版で差し替わるサプライチェーン穴になる。
+    # Velopack ライブラリ (PackageReference) は prerelease 0.0.x に固定されているが、vpk CLI はそれとは
+    # 別管理の安定版でよい (vpk は後方互換で旧ランタイム向けパッケージも pack できる)。
+    # 更新時はこの値を手動で上げ、pack→配信→クライアント更新まで検証してから確定する。
+    $vpkVersion = "1.2.0"
 
     $installedVersion = $null
     $command = Get-Command vpk -ErrorAction SilentlyContinue
