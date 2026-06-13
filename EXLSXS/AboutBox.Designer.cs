@@ -73,7 +73,7 @@ namespace EXLSXS
 			this.HomePageLink.Size = new global::System.Drawing.Size(271, 18);
 			this.HomePageLink.TabIndex = 6;
 			this.HomePageLink.TabStop = true;
-			this.HomePageLink.Text = "https://example.com/exlsxs/";
+			this.HomePageLink.Text = "https://exlsxs.nephilim.jp";
 			this.HomePageLink.LinkClicked += new global::System.Windows.Forms.LinkLabelLinkClickedEventHandler(this.HomePageLink_LinkClicked);
 			this.label5.Anchor = global::System.Windows.Forms.AnchorStyles.Bottom | global::System.Windows.Forms.AnchorStyles.Left | global::System.Windows.Forms.AnchorStyles.Right;
 			this.label5.Location = new global::System.Drawing.Point(12, 156);

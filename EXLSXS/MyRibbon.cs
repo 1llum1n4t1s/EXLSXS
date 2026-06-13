@@ -1,5 +1,4 @@
 using System;
-using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Text;
 using System.Linq;
@@ -18,7 +17,7 @@ namespace EXLSXS
 
 		public string AdjustFontName
 		{
-			get { return FontBox.SelectedItem.Label; }
+			get { return FontBox.SelectedItem?.Label ?? string.Empty; }
 		}
 
 		public Excel.XlWindowView AdjustView
@@ -61,9 +60,9 @@ namespace EXLSXS
 
 		private void SetupFontBox()
 		{
-			// フォントプレビュー画像の生成 (フォント数 × GDI+ Bitmap 描画) はリボン Load を
-			// 数百ms〜1秒ブロックし、生成した Bitmap が UI 生存中ずっと常駐する。起動を軽くするため
-			// 画像は付けず、フォント名ラベルのみで一覧する (フォント選択はラベルで完結する)。
+			// Excel のフォント一覧のように、各フォント名をそのフォント自身で描画したプレビュー画像を付ける。
+			// (画像生成でリボン Load が数百 ms 伸び、生成した Bitmap は UI 生存中常駐するが、
+			//  「選択するフォントの見た目が分かる」ことを優先する。)
 			foreach (FontFamily fontFamily in new InstalledFontCollection().Families)
 			{
 				if (fontFamily.IsStyleAvailable(FontStyle.Regular)
@@ -72,15 +71,19 @@ namespace EXLSXS
 					&& fontFamily.IsStyleAvailable(FontStyle.Strikeout)
 					&& fontFamily.IsStyleAvailable(FontStyle.Underline))
 				{
+					Bitmap image = CreateFontPreviewImage(fontFamily);
 					RibbonDropDownItem item = Globals.Factory.GetRibbonFactory().CreateRibbonDropDownItem();
 					item.Label = fontFamily.Name;
+					item.Image = image;
 					FontBox.Items.Add(item);
 				}
 
 				fontFamily.Dispose();
 			}
 
-			RibbonDropDownItem selectedFont = FontBox.Items.FirstOrDefault(item => item.Label == Globals.ThisAddIn.Application.StandardFont);
+			// StandardFont の取得は COM 往復なので、述語内で毎回評価せずループ前に 1 回退避する。
+			string standardFont = Globals.ThisAddIn.Application.StandardFont;
+			RibbonDropDownItem selectedFont = FontBox.Items.FirstOrDefault(item => item.Label == standardFont);
 			if (selectedFont != null)
 			{
 				FontBox.SelectedItem = selectedFont;
@@ -93,63 +96,76 @@ namespace EXLSXS
 			}
 		}
 
-		private void SetupWindowViewBox()
+		// フォント名を、そのフォント自身で描画したプレビュー画像にしてドロップダウン一覧に表示する
+		// (Excel のフォント一覧と同様)。閉じた FontBox は item.Label(フォント名テキスト)を表示するため、
+		// この画像の高さは閉じた箱の高さ・リボンの行間には影響しない (一覧の項目高さだけを決める)。
+		// TextRenderer.DrawText (GDI・不透明描画) を使う。GDI+ の DrawString を透明背景に描くと
+		// リボン上で文字が出ず空画像になるため、ここは GDI 描画を維持する。
+		private static Bitmap CreateFontPreviewImage(FontFamily fontFamily)
 		{
-			List<Tuple<string, Excel.XlWindowView>> views = new List<Tuple<string, Excel.XlWindowView>>
+			Bitmap image = new Bitmap(200, 20);
+			using (Graphics graphics = Graphics.FromImage(image))
+			using (Font font = new Font(fontFamily, 16f, GraphicsUnit.Pixel))
 			{
-				new Tuple<string, Excel.XlWindowView>("標準", Excel.XlWindowView.xlNormalView),
-				new Tuple<string, Excel.XlWindowView>("ページ レイアウト", Excel.XlWindowView.xlPageLayoutView),
-				new Tuple<string, Excel.XlWindowView>("改ページ プレビュー", Excel.XlWindowView.xlPageBreakPreview)
-			};
-
-			foreach (Tuple<string, Excel.XlWindowView> view in views)
-			{
-				RibbonDropDownItem item = Globals.Factory.GetRibbonFactory().CreateRibbonDropDownItem();
-				item.Label = view.Item1;
-				item.Tag = view.Item2;
-				WindowViewBox.Items.Add(item);
+				graphics.TextRenderingHint = TextRenderingHint.AntiAliasGridFit;
+				TextRenderer.DrawText(graphics, fontFamily.Name, font, Point.Empty, SystemColors.MenuText);
 			}
 
-			WindowViewBox.SelectedItem = WindowViewBox.Items.First(item => item.Label == "標準");
+			return image;
+		}
+
+		// (ラベル, 値) の一覧から RibbonDropDownItem を生成して box に追加し、defaultLabel の項目を選択する。
+		// WindowViewBox / WindowZoomBox が同じ骨格なので共通化する。
+		private static void PopulateDropDown<T>(RibbonDropDown box, (string Label, T Value)[] items, string defaultLabel)
+		{
+			foreach (var (label, value) in items)
+			{
+				RibbonDropDownItem item = Globals.Factory.GetRibbonFactory().CreateRibbonDropDownItem();
+				item.Label = label;
+				item.Tag = value;
+				box.Items.Add(item);
+			}
+
+			box.SelectedItem = box.Items.First(item => item.Label == defaultLabel);
+		}
+
+		private void SetupWindowViewBox()
+		{
+			PopulateDropDown(WindowViewBox, new (string Label, Excel.XlWindowView Value)[]
+			{
+				("標準", Excel.XlWindowView.xlNormalView),
+				("ページ レイアウト", Excel.XlWindowView.xlPageLayoutView),
+				("改ページ プレビュー", Excel.XlWindowView.xlPageBreakPreview)
+			}, "標準");
 		}
 
 		private void SetupWindowZoomBox()
 		{
-			List<Tuple<string, int>> zoomLevels = new List<Tuple<string, int>>
+			PopulateDropDown(WindowZoomBox, new (string Label, int Value)[]
 			{
-				new Tuple<string, int>("50%", 50),
-				new Tuple<string, int>("55%", 55),
-				new Tuple<string, int>("60%", 60),
-				new Tuple<string, int>("65%", 65),
-				new Tuple<string, int>("70%", 70),
-				new Tuple<string, int>("75%", 75),
-				new Tuple<string, int>("80%", 80),
-				new Tuple<string, int>("85%", 85),
-				new Tuple<string, int>("90%", 90),
-				new Tuple<string, int>("95%", 95),
-				new Tuple<string, int>("100%", 100),
-				new Tuple<string, int>("105%", 105),
-				new Tuple<string, int>("110%", 110),
-				new Tuple<string, int>("115%", 115),
-				new Tuple<string, int>("120%", 120),
-				new Tuple<string, int>("125%", 125),
-				new Tuple<string, int>("130%", 130),
-				new Tuple<string, int>("135%", 135),
-				new Tuple<string, int>("140%", 140),
-				new Tuple<string, int>("145%", 145),
-				new Tuple<string, int>("150%", 150),
-				new Tuple<string, int>("200%", 200)
-			};
-
-			foreach (Tuple<string, int> zoomLevel in zoomLevels)
-			{
-				RibbonDropDownItem item = Globals.Factory.GetRibbonFactory().CreateRibbonDropDownItem();
-				item.Label = zoomLevel.Item1;
-				item.Tag = zoomLevel.Item2;
-				WindowZoomBox.Items.Add(item);
-			}
-
-			WindowZoomBox.SelectedItem = WindowZoomBox.Items.First(item => item.Label == "100%");
+				("50%", 50),
+				("55%", 55),
+				("60%", 60),
+				("65%", 65),
+				("70%", 70),
+				("75%", 75),
+				("80%", 80),
+				("85%", 85),
+				("90%", 90),
+				("95%", 95),
+				("100%", 100),
+				("105%", 105),
+				("110%", 110),
+				("115%", 115),
+				("120%", 120),
+				("125%", 125),
+				("130%", 130),
+				("135%", 135),
+				("140%", 140),
+				("145%", 145),
+				("150%", 150),
+				("200%", 200)
+			}, "100%");
 		}
 
 		private void AdjustFontBox_Click(object sender, RibbonControlEventArgs e)

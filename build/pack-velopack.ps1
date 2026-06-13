@@ -512,6 +512,13 @@ $settingsJson = $settings | ConvertTo-Json -Depth 5
 Ensure-VelopackCli
 Reset-Directory -Path $releaseDir
 
+# Setup.exe / Update.exe に付けるアイコン。Host 本体は csproj の ApplicationIcon で
+# 同じ app.ico を持つが、Velopack の Setup.exe には vpk pack の --icon を渡さないと付かない。
+$packIcon = Join-Path $root "icon\app.ico"
+if (-not (Test-Path -LiteralPath $packIcon)) {
+    throw "Package icon was not found: $packIcon"
+}
+
 $vpkArgs = @(
     "pack",
     "--packId", "EXLSXS",
@@ -520,6 +527,7 @@ $vpkArgs = @(
     "--packAuthors", "EXLSXS",
     "--packDir", $stagingDir,
     "--mainExe", "EXLSXS.Host.exe",
+    "--icon", $packIcon,
     "--outputDir", $releaseDir,
     "--channel", $Channel,
     "--shortcuts", "None"

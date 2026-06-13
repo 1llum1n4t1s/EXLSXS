@@ -41,5 +41,29 @@ namespace Microsoft.Office.Interop.Excel
 			[param: In]
 			set;
 		}
+
+		// ScrollRow / ScrollColumn: 表示中ペインの先頭行 / 列 (1 始まり)。DispId は実 Excel PIA
+		// (Microsoft.Office.Interop.Excel, GUID 00020893-...) の Window メンバと一致する値。
+		int ScrollRow
+		{
+			[DispId(655)]
+			[PreserveSig]
+			get;
+			[DispId(655)]
+			[PreserveSig]
+			[param: In]
+			set;
+		}
+
+		int ScrollColumn
+		{
+			[DispId(654)]
+			[PreserveSig]
+			get;
+			[DispId(654)]
+			[PreserveSig]
+			[param: In]
+			set;
+		}
 	}
 }
