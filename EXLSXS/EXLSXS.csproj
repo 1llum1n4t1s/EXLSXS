@@ -112,7 +112,6 @@
     <Compile Include="AboutBox.Designer.cs">
       <DependentUpon>AboutBox.cs</DependentUpon>
     </Compile>
-    <Compile Include="Globals.cs" />
     <Compile Include="MyRibbon.cs">
       <SubType>Form</SubType>
     </Compile>
@@ -131,7 +130,12 @@
       <DesignTimeSharedInput>True</DesignTimeSharedInput>
     </Compile>
     <Compile Include="ThisAddIn.cs" />
-    <Compile Include="ThisRibbonCollection.cs" />
+    <None Include="ThisAddIn.Designer.xml">
+      <DependentUpon>ThisAddIn.cs</DependentUpon>
+    </None>
+    <Compile Include="ThisAddIn.Designer.cs">
+      <DependentUpon>ThisAddIn.Designer.xml</DependentUpon>
+    </Compile>
     <Compile Include="UIHelper.cs" />
   </ItemGroup>
   <ItemGroup>
@@ -179,4 +183,22 @@
       <Output TaskParameter="OutputFile" ItemName="Compile" />
     </WriteCodeFragment>
   </Target>
+  <!-- VSTO Office フレーバーが IDE ロード時に読む Office ホスト設定。
+       VS2026 でこのプロジェクトが読み込めないのは、標準 VSTO テンプレートが持つ
+       <Host>/<HostItem> 宣言 (ThisAddIn.Designer.xml/cs を参照) が欠けていたため。
+       フレーバー初期化はこの Host 宣言を前提にしているので、欠けていると
+       serviceGuid アサート (GUID が空) でプロジェクト読み込みに失敗する
+       (MSBuild ビルドは Host 宣言が無くても通るため気付きにくい)。
+       ProjectCreationSetting="1" + <Host>/<HostItem> を標準テンプレート同等に持たせて
+       フレーバーを正常にロードさせる。 -->
+  <ProjectExtensions>
+    <VisualStudio>
+      <FlavorProperties GUID="{BAA0C2D2-18E2-41B9-852F-F413020CAA33}">
+        <ProjectProperties HostName="Excel" HostPackage="{29A7B9D7-A7F1-4328-8EF0-6B2D1A56B2C1}" OfficeVersion="15.0" VstxVersion="4.0" ApplicationType="Excel" Language="cs" TemplatesPath="" DebugInfoExeName="#Software\Microsoft\Office\16.0\Excel\InstallRoot\Path#excel.exe" DebugInfoCommandLine="/x " AddItemTemplatesGuid="{51063C3A-E220-4D12-8922-BDA915ACD783}" />
+        <Host Name="Excel" GeneratedCodeNamespace="EXLSXS" IconIndex="0">
+          <HostItem Name="ThisAddIn" Code="ThisAddIn.cs" CanonicalName="AddIn" CanActivate="false" IconIndex="1" Blueprint="ThisAddIn.Designer.xml" GeneratedCode="ThisAddIn.Designer.cs" />
+        </Host>
+      </FlavorProperties>
+    </VisualStudio>
+  </ProjectExtensions>
 </Project>

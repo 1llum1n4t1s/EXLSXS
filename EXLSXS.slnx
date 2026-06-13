@@ -1,5 +1,5 @@
 <Solution>
-  <Project Path="EXLSXS.Host/EXLSXS.Host.csproj" />
   <Project Path="EXLSXS.Host.Tests/EXLSXS.Host.Tests.csproj" />
-  <Project Path="EXLSXS/EXLSXS.csproj" />
+  <Project Path="EXLSXS.Host/EXLSXS.Host.csproj" />
+  <Project Path="EXLSXS/EXLSXS.csproj" Id="ae2d4261-a90e-497b-a60e-59fac4d7817d" />
 </Solution>
