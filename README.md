@@ -1,76 +1,43 @@
 # EXLSXS
 
-Excel 用 VSTO add-in を Velopack で配布する構成です。自動更新の配信元は Cloudflare R2 (`https://exlsxs.nephilim.jp`) です。
+ブック内の **全シートの表示を、ワンクリックで整える** Microsoft Excel 用アドインです。
 
-## 構成
+リボンで選んだ表示倍率・表示モードを全シートへ一括適用し、必要ならフォントを統一し、各シートのカーソルを A1 に戻します。1 枚ずつ直す手間がなくなり、誰が開いても同じ見た目で始められます。
 
-- `EXLSXS/`
-  - .NET Framework 4.8.1 の VSTO add-in 本体
-- `EXLSXS.Host/`
-  - Velopack で配布されるホスト
-  - インストール/更新時の VSTO 登録
-  - Windows 起動時のサイレント更新確認
-- `build/pack-velopack.ps1`
-  - VSTO publish
-  - host publish
-  - Velopack package 生成
+無料・オープンソース。Web サイト: <https://exlsxs.nephilim.jp/>
 
-## ローカルビルド
+## できること
 
-```powershell
-MSBuild EXLSXS.slnx /t:Restore,Rebuild /p:Configuration=Release /p:Platform="Any CPU"
-powershell -NoProfile -ExecutionPolicy Bypass -File .\build\pack-velopack.ps1
-```
+- **全シートを一括整形** — リボンで選んだ表示モードと表示倍率を、ブック内のすべてのシートへまとめて適用
+- **表示倍率をそろえる** — シートごとにバラバラな拡大率を、指定した 1 つの倍率に統一（50%〜200%）
+- **表示モードを統一** — 標準 / ページレイアウト / 改ページプレビューを全シートで同じ表示に
+- **フォントを統一**（任意）— ブック全体のフォントをそろえて見た目を整える
+- **カーソルを A1 へ** — 各シートの選択位置を A1 にリセット
+- **できなかったシートを通知** — 非表示・保護などで整形できなかったシートは、最後に理由とともにまとめて表示
 
-出力先: `artifacts\velopack-releases\EXLSXS-win-Setup.exe`
+## インストール
 
-`pack-velopack.ps1` に署名パラメータを渡さない場合は未署名パッケージになります。サイレント更新の自動適用は、署名済み package と期待 publisher 設定が揃っている場合だけ通ります。
+1. [インストーラー (Windows x64)](https://exlsxs.nephilim.jp/EXLSXS-win-Setup.exe) をダウンロード
+2. ダウンロードした `EXLSXS-win-Setup.exe` を実行
+3. Excel を起動すると、リボンに **EXLSXS** グループが追加されます
 
-## リリース (ローカル署名)
+管理者権限は不要です。インストーラーが前提条件（.NET Framework 4.8.1 / VSTO ランタイム）の有無を確認し、不足していれば導入します。更新は自動で適用されます。
 
-配信元の Cloudflare R2 へは、コード署名付きで `scripts/release-local.ps1` から公開します (SimplySign のトークンログインが必要なため CI では署名できません)。
+## 使い方
 
-```powershell
-pwsh -NoProfile -File scripts\release-local.ps1 -SkipUpload  # ビルド + 署名のみ確認
-pwsh -NoProfile -File scripts\release-local.ps1              # 署名 + R2 アップロード + 配信確認 + 旧版掃除
-```
+1. **表示を選ぶ** — リボンで表示モードと表示倍率を選びます（必要ならフォント統一にチェック）
+2. **実行する** — ボタンひとつで、ブック内の全シートへまとめて適用されます
+3. **完了** — 各シートのカーソルは A1 に戻ります。整形できなかったシートがあれば最後に通知されます
 
-`/vava` でバージョンを上げると、precheck (署名証明書確認) → このスクリプトの自動実行までを行います。
+## 動作環境
 
-## 配布時の前提条件
+| 項目 | 要件 |
+|------|------|
+| OS | Windows 10 / 11（64-bit） |
+| アプリ | Microsoft Excel デスクトップ版（Excel 2016 以降 / Microsoft 365） |
+| ランタイム | .NET Framework 4.8.1 + VSTO ランタイム（インストーラーが確認） |
+| 権限 | 通常ユーザー（管理者権限不要） |
 
-クライアントには以下が必要です。
+## ライセンス
 
-- .NET Framework 4.8.1
-- Visual Studio Tools for Office Runtime
-
-Velopack package には `vsto\setup.exe` を同梱しています。host 側でも前提条件チェックを行い、不足時は登録を失敗として扱います。
-
-## リリースの前提
-
-リリースは `scripts/release-local.ps1` でローカル実行します (GitHub Actions では署名できないため CI リリースは持ちません)。
-
-- **SimplySign Desktop** がトークンログイン済みで、コード署名証明書 (`CN=Open Source Developer Yuichiro Shinozaki`) が `Cert:\CurrentUser\My` に見えていること
-- `C:\Users\IMT\dev\Secret\secrets.json` の `cloudflare.api_token` に R2 アップロード用トークンがあること
-- ClickOnce manifest 署名 (VSTO) と Velopack package の Authenticode 署名は同一証明書で行い、クライアントはその publisher thumbprint を更新適用前に照合します
-
-## 更新フロー
-
-1. Velopack install / update
-2. host が前提条件を確認
-3. host が VSTO manifest を登録
-4. Windows 起動時に `EXLSXS.Host.exe --update-check`
-5. Cloudflare R2 (`exlsxs.nephilim.jp`) から更新 package を download
-6. package 内の `EXLSXS.Host.exe` / `EXLSXS.Host.dll` / `EXLSXS.dll(.deploy)` の署名者 thumbprint を検証
-7. 一致した場合だけサイレント更新を適用
-
-## Excel 側の挙動
-
-`DoFinish()` は以下を行います。
-
-- リボンで選んだ view / zoom を各シートへ適用
-- 必要ならフォントを統一
-- `A1` を選択
-- 失敗したシートは最後にまとめて警告表示
-
-非表示シートや保護シートは、できなかった理由をユーザーに返します。
+無料・オープンソース。ソースコードは [GitHub](https://github.com/1llum1n4t1s/EXLSXS) で公開しています。
