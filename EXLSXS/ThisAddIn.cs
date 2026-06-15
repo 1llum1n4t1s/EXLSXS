@@ -1,5 +1,4 @@
 using System;
-using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
 using Microsoft.Office.Interop.Excel;
@@ -75,7 +74,6 @@ namespace EXLSXS
 
 		internal void DoFinish()
 		{
-			var failures = new List<string>();
 			Microsoft.Office.Interop.Excel.Application application = this.Application;
 			Microsoft.Office.Interop.Excel.Workbook workbook = application.ActiveWorkbook;
 			if (workbook == null)
@@ -91,26 +89,14 @@ namespace EXLSXS
 			bool restoreScreenUpdating = false;
 			bool previousScreenUpdating = true;
 
-			// 仕上げ処理は全シートを順に Activate するため、完了後にユーザーが見ていたシートへ
-			// 戻せるよう、開始時のアクティブシートを退避しておく。
-			object originalActiveSheet = null;
-			try
-			{
-				originalActiveSheet = application.ActiveSheet;
-			}
-			catch
-			{
-			}
-
 			try
 			{
 				previousScreenUpdating = application.ScreenUpdating;
 				application.ScreenUpdating = false;
 				restoreScreenUpdating = true;
 			}
-			catch (Exception ex)
+			catch
 			{
-				failures.Add("画面更新の一時停止: " + ex.Message);
 			}
 
 			try
@@ -119,60 +105,42 @@ namespace EXLSXS
 				int count = worksheets.Count;
 				for (int i = count; i > 0; i--)
 				{
-					string sheetName = "#" + i.ToString();
 					try
 					{
 						object obj = worksheets[i];
-					if (obj is Microsoft.Office.Interop.Excel._Worksheet)
-					{
-						Microsoft.Office.Interop.Excel._Worksheet worksheet = (Microsoft.Office.Interop.Excel._Worksheet)obj;
-							sheetName = GetWorksheetName(worksheet, sheetName);
-							if (adjustFont)
+						if (obj is Microsoft.Office.Interop.Excel._Worksheet worksheet)
+						{
+							if (adjustFont && !IsWorksheetProtected(worksheet))
 							{
-								if (IsWorksheetProtected(worksheet))
-								{
-									failures.Add(sheetName + ": 保護されているためフォント変更をスキップしました。");
-								}
-								else
-								{
-									worksheet.Cells.Font.Name = adjustFontName;
-								}
+								worksheet.Cells.Font.Name = adjustFontName;
 							}
 
+							// 非表示シートはアクティブ化できないため、表示倍率・選択位置の変更はスキップする。
 							if (!IsWorksheetVisible(worksheet))
 							{
-								failures.Add(sheetName + ": 非表示シートのため表示倍率と選択位置の変更をスキップしました。");
 								continue;
 							}
 
-						worksheet.Activate();
+							worksheet.Activate();
 							Microsoft.Office.Interop.Excel.Window activeWindow = application.ActiveWindow;
-						if (activeWindow != null)
-						{
+							if (activeWindow != null)
+							{
 								activeWindow.View = adjustView;
 								activeWindow.Zoom = adjustZoom;
+							}
+
+							worksheet.get_Range("A1", Missing.Value).Select();
 						}
-						worksheet.get_Range("A1", Missing.Value).Select();
-					}
-				}
-					catch (Exception ex)
-					{
-						failures.Add(sheetName + ": " + ex.Message);
-					}
-				}
-			}
-			finally
-			{
-				if (originalActiveSheet is Microsoft.Office.Interop.Excel._Worksheet originalWorksheet)
-				{
-					try
-					{
-						originalWorksheet.Activate();
 					}
 					catch
 					{
 					}
 				}
+			}
+			finally
+			{
+				// 仕上げ完了後は一番左 (先頭) の表示シートをアクティブにする。
+				ActivateLeftmostVisibleWorksheet(workbook);
 
 				if (restoreScreenUpdating)
 				{
@@ -185,7 +153,7 @@ namespace EXLSXS
 					}
 				}
 
-				// 最後に表示中（元のアクティブ）シートのスクロールを左上へ戻す。
+				// 最後に先頭シートのスクロールを左上へ戻す。
 				// ウィンドウ枠を固定していると A1 を選択してもスクロール対象ペイン（固定枠の外側）は
 				// 先頭に戻らないため、ここで明示的に ScrollRow/ScrollColumn を先頭にする。
 				// ScrollRow/ScrollColumn は ScreenUpdating=false 中は確実に反映されないので、
@@ -204,19 +172,27 @@ namespace EXLSXS
 				{
 				}
 			}
-
-			ShowFinishFailures(failures);
 		}
 
-		private static string GetWorksheetName(Microsoft.Office.Interop.Excel._Worksheet worksheet, string fallback)
+		// ブックの一番左 (先頭) の表示シートをアクティブにする。
+		// 非表示シートはアクティブ化できないため読み飛ばし、最初に見つかった表示シートをアクティブにする。
+		private static void ActivateLeftmostVisibleWorksheet(Microsoft.Office.Interop.Excel.Workbook workbook)
 		{
 			try
 			{
-				return worksheet.Name;
+				Microsoft.Office.Interop.Excel.Sheets worksheets = workbook.Worksheets;
+				int count = worksheets.Count;
+				for (int i = 1; i <= count; i++)
+				{
+					if (worksheets[i] is Microsoft.Office.Interop.Excel._Worksheet worksheet && IsWorksheetVisible(worksheet))
+					{
+						worksheet.Activate();
+						return;
+					}
+				}
 			}
 			catch
 			{
-				return fallback;
 			}
 		}
 
@@ -242,22 +218,6 @@ namespace EXLSXS
 			{
 				return false;
 			}
-		}
-
-		private static void ShowFinishFailures(List<string> failures)
-		{
-			if (failures.Count == 0)
-			{
-				return;
-			}
-
-			string details = string.Join(Environment.NewLine, failures.Take(12));
-			if (failures.Count > 12)
-			{
-				details += Environment.NewLine + $"...他 {failures.Count - 12} 件";
-			}
-
-			UIHelper.ShowWarningDialog("一部のシートで仕上げ処理を完了できませんでした。" + Environment.NewLine + Environment.NewLine + "{0}", details);
 		}
 
 		private void InternalStartup()

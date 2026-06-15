@@ -114,9 +114,11 @@ namespace EXLSXS
 			return image;
 		}
 
-		// (ラベル, 値) の一覧から RibbonDropDownItem を生成して box に追加し、defaultLabel の項目を選択する。
+		// (ラベル, 値) の一覧から RibbonDropDownItem を生成して box に追加する。
+		// savedValue (前回ユーザーが選んだ値) があり、対応する項目があればそれを選択し、
+		// 無ければ defaultLabel の項目を選択する。valueToInt は Tag の値をレジストリ保存値 (int) に対応付ける。
 		// WindowViewBox / WindowZoomBox が同じ骨格なので共通化する。
-		private static void PopulateDropDown<T>(RibbonDropDown box, (string Label, T Value)[] items, string defaultLabel)
+		private static void PopulateDropDown<T>(RibbonDropDown box, (string Label, T Value)[] items, string defaultLabel, int? savedValue, Func<T, int> valueToInt)
 		{
 			foreach (var (label, value) in items)
 			{
@@ -124,6 +126,16 @@ namespace EXLSXS
 				item.Label = label;
 				item.Tag = value;
 				box.Items.Add(item);
+			}
+
+			if (savedValue.HasValue)
+			{
+				RibbonDropDownItem savedItem = box.Items.FirstOrDefault(item => valueToInt((T)item.Tag) == savedValue.Value);
+				if (savedItem != null)
+				{
+					box.SelectedItem = savedItem;
+					return;
+				}
 			}
 
 			box.SelectedItem = box.Items.First(item => item.Label == defaultLabel);
@@ -136,7 +148,7 @@ namespace EXLSXS
 				("標準", Excel.XlWindowView.xlNormalView),
 				("ページ レイアウト", Excel.XlWindowView.xlPageLayoutView),
 				("改ページ プレビュー", Excel.XlWindowView.xlPageBreakPreview)
-			}, "標準");
+			}, "標準", SettingsStore.ReadWindowView(), value => (int)value);
 		}
 
 		private void SetupWindowZoomBox()
@@ -165,7 +177,27 @@ namespace EXLSXS
 				("145%", 145),
 				("150%", 150),
 				("200%", 200)
-			}, "100%");
+			}, "100%", SettingsStore.ReadWindowZoom(), value => value);
+		}
+
+		// 表示モードをユーザーが変更したら選択値を保存する。
+		// (コードで SelectedItem を代入する復元時には SelectionChanged は発火しないため、
+		//  このハンドラはユーザー操作時のみ呼ばれる。)
+		private void WindowViewBox_SelectionChanged(object sender, RibbonControlEventArgs e)
+		{
+			if (WindowViewBox.SelectedItem?.Tag is Excel.XlWindowView view)
+			{
+				SettingsStore.WriteWindowView((int)view);
+			}
+		}
+
+		// 倍率をユーザーが変更したら選択値を保存する。
+		private void WindowZoomBox_SelectionChanged(object sender, RibbonControlEventArgs e)
+		{
+			if (WindowZoomBox.SelectedItem?.Tag is int zoom)
+			{
+				SettingsStore.WriteWindowZoom(zoom);
+			}
 		}
 
 		private void AdjustFontBox_Click(object sender, RibbonControlEventArgs e)

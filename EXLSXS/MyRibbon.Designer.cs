@@ -109,6 +109,7 @@ namespace EXLSXS
 			this.WindowViewBox.ShowLabel = true;
 			this.WindowViewBox.SizeString = "改ページ プレビュー";
 			this.WindowViewBox.SuperTip = "すべてのシートをこの表示モード（標準 / ページ レイアウト / 改ページ プレビュー）に揃えます。";
+			this.WindowViewBox.SelectionChanged += new Microsoft.Office.Tools.Ribbon.RibbonControlEventHandler(this.WindowViewBox_SelectionChanged);
 			// 
 			// separator1
 			// 
@@ -122,6 +123,7 @@ namespace EXLSXS
 			this.WindowZoomBox.ShowLabel = true;
 			this.WindowZoomBox.SizeString = "改ページ プレビュー";
 			this.WindowZoomBox.SuperTip = "すべてのシートの表示倍率をこの値（50%〜200%）に揃えます。";
+			this.WindowZoomBox.SelectionChanged += new Microsoft.Office.Tools.Ribbon.RibbonControlEventHandler(this.WindowZoomBox_SelectionChanged);
 			//
 			// FontRowBox
 			//
