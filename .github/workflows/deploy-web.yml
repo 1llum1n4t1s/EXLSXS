@@ -1,0 +1,42 @@
+name: Deploy landing page
+
+# web/ (ランディングページ + Cloudflare Worker) を変更して main に push したら、
+# Cloudflare Worker "exlsxs-landing" を自動デプロイする。
+# 手動実行 (workflow_dispatch) も可能。
+#
+# 必要な GitHub Secrets:
+#   CLOUDFLARE_API_TOKEN  - Workers 編集権限を持つ API トークン
+#   CLOUDFLARE_ACCOUNT_ID - 対象アカウント ID
+#
+# 注意: ローカルの `pnpm -C web dlx wrangler@4 deploy` は -C が効かず誤デプロイになるため、
+#       CI でもローカルでも `deploy --config web/wrangler.toml` でファイルを明示する。
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'web/**'
+      - '.github/workflows/deploy-web.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# 連続 push でデプロイが重ならないよう、進行中の同名ジョブはキャンセルする。
+concurrency:
+  group: deploy-web
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Deploy to Cloudflare Workers
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          wranglerVersion: '4'
+          command: deploy --config web/wrangler.toml
