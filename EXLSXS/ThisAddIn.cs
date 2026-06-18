@@ -130,6 +130,14 @@ namespace EXLSXS
 							}
 
 							worksheet.get_Range("A1", Missing.Value).Select();
+
+							// 各表示シートのスクロール位置を左上へ戻す。A1 を選択しても
+							// ウィンドウ枠を固定/分割しているシートはスクロール対象ペインが
+							// 先頭に戻らないため、シートごとに（＝アクティブな今のうちに）明示リセットする。
+							// ここでの設定は ScreenUpdating=false でも各シートの表示状態として保持され、
+							// 後でそのシートに切り替えた際に左上で表示される。最後に見るシートは
+							// finally で画面更新を戻した後に再リセットして確実に反映させる。
+							ScrollWindowToTopLeft(activeWindow);
 						}
 					}
 					catch
@@ -153,24 +161,10 @@ namespace EXLSXS
 					}
 				}
 
-				// 最後に先頭シートのスクロールを左上へ戻す。
-				// ウィンドウ枠を固定していると A1 を選択してもスクロール対象ペイン（固定枠の外側）は
-				// 先頭に戻らないため、ここで明示的に ScrollRow/ScrollColumn を先頭にする。
-				// ScrollRow/ScrollColumn は ScreenUpdating=false 中は確実に反映されないので、
-				// 画面更新を戻した後のこのタイミングで実施する。設定できない表示状態（特殊なビュー等）は
-				// catch で諦める。
-				try
-				{
-					Microsoft.Office.Interop.Excel.Window finalWindow = application.ActiveWindow;
-					if (finalWindow != null)
-					{
-						finalWindow.ScrollRow = 1;
-						finalWindow.ScrollColumn = 1;
-					}
-				}
-				catch
-				{
-				}
+				// 画面更新を戻した後、最後に見ている（先頭）シートのスクロールを左上へ確実に戻す。
+				// ScrollRow/ScrollColumn は ScreenUpdating=false 中は表示へ即時反映されないことがあるため、
+				// このタイミングでもう一度リセットして、ユーザーが見るシートを左上表示で確定させる。
+				ScrollWindowToTopLeft(application.ActiveWindow);
 			}
 		}
 
@@ -190,6 +184,37 @@ namespace EXLSXS
 						return;
 					}
 				}
+			}
+			catch
+			{
+			}
+		}
+
+		// ウィンドウのスクロール位置を左上へ戻す。
+		// Window.ScrollColumn / ScrollRow は「固定枠を除いたスクロール領域」の先頭列 / 行を指す
+		// (公式仕様: panes are frozen → ScrollRow excludes the frozen areas)。= 1 を指定すると
+		// スクロール対象ペインが最初の非固定セルまで戻る (Excel が有効な最小値へ丸める)。
+		// 行・列を固定したウィンドウでも、固定行の列スクロール / 固定列の行スクロールは
+		// 対応ペイン間で同期されるため、Window への 1 回の指定で全ペインが左上で揃う。
+		// ScrollColumn と ScrollRow は片方が失敗してももう片方を進めたいので個別に try/catch する。
+		private static void ScrollWindowToTopLeft(Microsoft.Office.Interop.Excel.Window window)
+		{
+			if (window == null)
+			{
+				return;
+			}
+
+			try
+			{
+				window.ScrollColumn = 1;
+			}
+			catch
+			{
+			}
+
+			try
+			{
+				window.ScrollRow = 1;
 			}
 			catch
 			{
