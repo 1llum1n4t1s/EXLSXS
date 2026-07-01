@@ -1,7 +1,9 @@
 using System;
 using System.Drawing;
 using System.Drawing.Text;
+using System.IO;
 using System.Linq;
+using System.Reflection;
 using System.Windows.Forms;
 using Excel = Microsoft.Office.Interop.Excel;
 using Microsoft.Office.Tools.Ribbon;
@@ -30,21 +32,111 @@ namespace EXLSXS
 			get { return (int)WindowZoomBox.SelectedItem.Tag; }
 		}
 
+		public bool AdjustGrid
+		{
+			get { return AdjustGridBox.Checked; }
+		}
+
+		public double AdjustGridSizeMm
+		{
+			get { return (double)GridSizeBox.SelectedItem.Tag; }
+		}
+
+		public bool AdjustNumberFormat
+		{
+			get { return AdjustNumberFormatBox.Checked; }
+		}
+
+		public string AdjustNumberFormatCode
+		{
+			get { return (string)NumberFormatBox.SelectedItem.Tag; }
+		}
+
 		private void MyRibbon_Load(object sender, RibbonUIEventArgs e)
 		{
+			try
+			{
+				LocalBuildLabel.Visible = IsLocalBuild();
+			}
+			catch
+			{
+			}
+
 			try
 			{
 				SetupFontBox();
 				SetupWindowViewBox();
 				SetupWindowZoomBox();
+				SetupGridSizeBox();
+				SetupNumberFormatBox();
 				AdjustFontBox.Checked = false;
 				FontBox.Enabled = false;
+				AdjustGridBox.Checked = false;
+				GridSizeBox.Enabled = false;
+				AdjustNumberFormatBox.Checked = false;
+				NumberFormatBox.Enabled = false;
 			}
 			catch
 			{
 				AdjustFontBox.Checked = false;
 				AdjustFontBox.Enabled = false;
 				FontBox.Enabled = false;
+				AdjustGridBox.Checked = false;
+				AdjustGridBox.Enabled = false;
+				GridSizeBox.Enabled = false;
+				AdjustNumberFormatBox.Checked = false;
+				AdjustNumberFormatBox.Enabled = false;
+				NumberFormatBox.Enabled = false;
+			}
+		}
+
+		// 実行中の EXLSXS.dll が Velopack 正規インストール先 (%LocalAppData%\EXLSXS\current\vsto\)
+		// から読み込まれているかを判定する。一致しなければ bin\Debug/Release 等からの
+		// ローカルビルドとみなす。判定不能時は「ローカル実行」側に倒す (安全側: 開発中に
+		// マークが出ないよりは、production 誤検知でマークが出る方が実害が小さい)。
+		// 実行中の EXLSXS.dll が Velopack 正規インストール先 (%LocalAppData%\EXLSXS\current\vsto\)
+		// から読み込まれているかを判定する。一致しなければ bin\Debug/Release 等からのローカルビルドとみなす。
+		//
+		// ⚠ Assembly.Location は使わない: vstolocal 登録でも strong-name 付きアセンブリは Fusion が
+		// シャドウコピーし、Location は %LocalAppData%\assembly\dl3\... を返す (本番/ローカル双方が dl3 経由に
+		// なるため Location では区別できず、本番でも「ローカル」と誤判定する)。CodeBase はシャドウコピー前の
+		// 元のロード元 URL を返すため、こちらで本番インストール先配下かどうかを判定する。
+		// 判定不能時は「ローカル実行」側に倒す (本番で誤ってマークが出るより、開発中にマークが出ない方が困る)。
+		private static bool IsLocalBuild()
+		{
+			try
+			{
+				string productionRoot = Path.Combine(
+					Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+					"EXLSXS", "current", "vsto");
+
+				Assembly assembly = Assembly.GetExecutingAssembly();
+				string originPath = null;
+				try
+				{
+					string codeBase = assembly.CodeBase;
+					if (!string.IsNullOrEmpty(codeBase))
+					{
+						originPath = new Uri(codeBase).LocalPath;
+					}
+				}
+				catch
+				{
+				}
+
+				// CodeBase が取れない環境では Location にフォールバックする
+				// (dl3 を返すと誤判定しうるが、CodeBase が無い方が例外的なので最後の手段)。
+				if (string.IsNullOrEmpty(originPath))
+				{
+					originPath = assembly.Location;
+				}
+
+				return string.IsNullOrEmpty(originPath)
+					|| !originPath.StartsWith(productionRoot, StringComparison.OrdinalIgnoreCase);
+			}
+			catch
+			{
+				return true;
 			}
 		}
 
@@ -118,7 +210,7 @@ namespace EXLSXS
 		// savedValue (前回ユーザーが選んだ値) があり、対応する項目があればそれを選択し、
 		// 無ければ defaultLabel の項目を選択する。valueToInt は Tag の値をレジストリ保存値 (int) に対応付ける。
 		// WindowViewBox / WindowZoomBox が同じ骨格なので共通化する。
-		private static void PopulateDropDown<T>(RibbonDropDown box, (string Label, T Value)[] items, string defaultLabel, int? savedValue, Func<T, int> valueToInt)
+		private static void PopulateDropDown<T>(RibbonDropDown box, (string Label, T Value)[] items, string defaultLabel, int? savedValue = null, Func<T, int> valueToInt = null)
 		{
 			foreach (var (label, value) in items)
 			{
@@ -180,6 +272,42 @@ namespace EXLSXS
 			}, "100%", SettingsStore.ReadWindowZoom(), value => value);
 		}
 
+		private void SetupGridSizeBox()
+		{
+			PopulateDropDown(GridSizeBox, new (string Label, double Value)[]
+			{
+				("2mm", 2.0),
+				("3mm", 3.0),
+				("4mm", 4.0),
+				("5mm", 5.0),
+				("6mm", 6.0),
+				("8mm", 8.0),
+				("10mm", 10.0),
+				("15mm", 15.0),
+				("20mm", 20.0)
+			}, "5mm");
+		}
+
+		// 標準の「セルの書式設定」ダイアログの数値の書式ドロップダウンと同じ項目構成
+		// (標準/数値/通貨/会計/日付(短い/長い)/時刻/パーセンテージ/分数/指数/文字列)。
+		private void SetupNumberFormatBox()
+		{
+			PopulateDropDown(NumberFormatBox, new (string Label, string Value)[]
+			{
+				("標準", "General"),
+				("数値", "0.00"),
+				("通貨", "\"¥\"#,##0.00_);(\"¥\"#,##0.00)"),
+				("会計", "_(\"¥\"* #,##0.00_);_(\"¥\"* (#,##0.00);_(\"¥\"* \"-\"??_);_(@_)"),
+				("日付の短い形式", "yyyy/m/d"),
+				("日付の長い形式", "yyyy\"年\"m\"月\"d\"日\""),
+				("時刻", "h:mm:ss"),
+				("パーセンテージ", "0.00%"),
+				("分数", "# ?/?"),
+				("指数", "0.00E+00"),
+				("文字列", "@")
+			}, "標準");
+		}
+
 		// 表示モードをユーザーが変更したら選択値を保存する。
 		// (コードで SelectedItem を代入する復元時には SelectionChanged は発火しないため、
 		//  このハンドラはユーザー操作時のみ呼ばれる。)
@@ -203,6 +331,16 @@ namespace EXLSXS
 		private void AdjustFontBox_Click(object sender, RibbonControlEventArgs e)
 		{
 			FontBox.Enabled = AdjustFontBox.Checked;
+		}
+
+		private void AdjustGridBox_Click(object sender, RibbonControlEventArgs e)
+		{
+			GridSizeBox.Enabled = AdjustGridBox.Checked;
+		}
+
+		private void AdjustNumberFormatBox_Click(object sender, RibbonControlEventArgs e)
+		{
+			NumberFormatBox.Enabled = AdjustNumberFormatBox.Checked;
 		}
 
 		private void GroupEXLSXS_DialogLauncherClick(object sender, RibbonControlEventArgs e)

@@ -25,6 +25,47 @@ namespace Microsoft.Office.Interop.Excel
 			get;
 		}
 
+		// RowHeight / ColumnWidth / NumberFormat: DispId は実 Excel PIA
+		// (Microsoft.Office.Interop.Excel, GUID 00020846-...) の Range メンバと一致する値。
+		object RowHeight
+		{
+			[DispId(272)]
+			[PreserveSig]
+			[return: MarshalAs(UnmanagedType.Struct)]
+			get;
+			[DispId(272)]
+			[PreserveSig]
+			[param: MarshalAs(UnmanagedType.Struct)]
+			[param: In]
+			set;
+		}
+
+		object ColumnWidth
+		{
+			[DispId(242)]
+			[PreserveSig]
+			[return: MarshalAs(UnmanagedType.Struct)]
+			get;
+			[DispId(242)]
+			[PreserveSig]
+			[param: MarshalAs(UnmanagedType.Struct)]
+			[param: In]
+			set;
+		}
+
+		object NumberFormat
+		{
+			[DispId(193)]
+			[PreserveSig]
+			[return: MarshalAs(UnmanagedType.Struct)]
+			get;
+			[DispId(193)]
+			[PreserveSig]
+			[param: MarshalAs(UnmanagedType.Struct)]
+			[param: In]
+			set;
+		}
+
 		// Token: 0x06000070 RID: 112
 		[DispId(235)]
 		[PreserveSig]

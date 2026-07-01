@@ -86,6 +86,22 @@ namespace EXLSXS
 			int adjustZoom = addInRibbon.AdjustZoom;
 			bool adjustFont = addInRibbon.AdjustFont;
 			string adjustFontName = adjustFont ? addInRibbon.AdjustFontName : string.Empty;
+			bool adjustGrid = addInRibbon.AdjustGrid;
+			bool adjustNumberFormat = addInRibbon.AdjustNumberFormat;
+			string adjustNumberFormatCode = adjustNumberFormat ? addInRibbon.AdjustNumberFormatCode : string.Empty;
+
+			// mm → pt/px の変換係数 (1inch=25.4mm=72pt=96px)。列幅(文字単位)は既定フォント
+			// (Calibri 11・最大数字幅 7px 相当) を前提にした近似式 (「Excel 方眼紙」で広く使われる式)。
+			// ブックの既定フォントがこれと異なる場合、厳密な正方形にはならない。
+			double gridRowHeightPoints = 0d;
+			double gridColumnWidthChars = 0d;
+			if (adjustGrid)
+			{
+				double gridSizeMm = addInRibbon.AdjustGridSizeMm;
+				gridRowHeightPoints = gridSizeMm * 2.8346;
+				gridColumnWidthChars = (gridSizeMm * 3.7795 - 5) / 7;
+			}
+
 			bool restoreScreenUpdating = false;
 			bool previousScreenUpdating = true;
 
@@ -110,9 +126,25 @@ namespace EXLSXS
 						object obj = worksheets[i];
 						if (obj is Microsoft.Office.Interop.Excel._Worksheet worksheet)
 						{
-							if (adjustFont && !IsWorksheetProtected(worksheet))
+							// フォント・方眼紙化・表示形式はセルの書式設定なので、保護シートでは
+							// (View/Zoom/選択と異なり) 変更が COM 例外になるためまとめてスキップする。
+							if (!IsWorksheetProtected(worksheet))
 							{
-								worksheet.Cells.Font.Name = adjustFontName;
+								if (adjustFont)
+								{
+									worksheet.Cells.Font.Name = adjustFontName;
+								}
+
+								if (adjustGrid)
+								{
+									worksheet.Cells.RowHeight = gridRowHeightPoints;
+									worksheet.Cells.ColumnWidth = gridColumnWidthChars;
+								}
+
+								if (adjustNumberFormat)
+								{
+									worksheet.Cells.NumberFormat = adjustNumberFormatCode;
+								}
 							}
 
 							// 非表示シートはアクティブ化できないため、表示倍率・選択位置の変更はスキップする。

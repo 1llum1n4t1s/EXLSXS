@@ -46,10 +46,22 @@ namespace EXLSXS
 			this.WindowZoomBox = this.Factory.CreateRibbonDropDown();
 			this.FontRowBox = this.Factory.CreateRibbonBox();
 			this.StackBox = this.Factory.CreateRibbonBox();
+			this.separator2 = this.Factory.CreateRibbonSeparator();
+			this.AdjustGridBox = this.Factory.CreateRibbonCheckBox();
+			this.GridSizeBox = this.Factory.CreateRibbonDropDown();
+			this.AdjustNumberFormatBox = this.Factory.CreateRibbonCheckBox();
+			this.NumberFormatBox = this.Factory.CreateRibbonDropDown();
+			this.GridRowBox = this.Factory.CreateRibbonBox();
+			this.NumberFormatRowBox = this.Factory.CreateRibbonBox();
+			this.FormatStackBox = this.Factory.CreateRibbonBox();
+			this.LocalBuildLabel = this.Factory.CreateRibbonLabel();
 			this.TabEXLSXS.SuspendLayout();
 			this.GroupEXLSXS.SuspendLayout();
 			this.FontRowBox.SuspendLayout();
 			this.StackBox.SuspendLayout();
+			this.GridRowBox.SuspendLayout();
+			this.NumberFormatRowBox.SuspendLayout();
+			this.FormatStackBox.SuspendLayout();
 			this.SuspendLayout();
 			// 
 			// TabEXLSXS
@@ -67,6 +79,8 @@ namespace EXLSXS
 			this.GroupEXLSXS.Items.Add(this.Finish);
 			this.GroupEXLSXS.Items.Add(this.separator1);
 			this.GroupEXLSXS.Items.Add(this.StackBox);
+			this.GroupEXLSXS.Items.Add(this.separator2);
+			this.GroupEXLSXS.Items.Add(this.FormatStackBox);
 			this.GroupEXLSXS.Label = "仕上げ";
 			this.GroupEXLSXS.Name = "GroupEXLSXS";
 			this.GroupEXLSXS.DialogLauncherClick += new Microsoft.Office.Tools.Ribbon.RibbonControlEventHandler(this.GroupEXLSXS_DialogLauncherClick);
@@ -75,11 +89,11 @@ namespace EXLSXS
 			// 
 			this.Finish.ControlSize = Microsoft.Office.Core.RibbonControlSize.RibbonControlSizeLarge;
 			this.Finish.Image = global::EXLSXS.Properties.Resources.RibbonFinish_32x32;
-			this.Finish.Label = "倍率と選択位置を揃える";
+			this.Finish.Label = "全シートに適用";
 			this.Finish.Name = "Finish";
-			this.Finish.ScreenTip = "倍率と選択位置を揃える";
+			this.Finish.ScreenTip = "全シートに適用";
 			this.Finish.ShowImage = true;
-			this.Finish.SuperTip = "選択中の表示モード・倍率（「フォントを揃える」が ON のときはフォントも）をすべてのシートに適用し、各シート A1 を選択してから先頭のシートをアクティブにします。";
+			this.Finish.SuperTip = "選択中の表示モード・倍率をすべてのシートに適用し、各シート A1 を選択してから先頭のシートをアクティブにします。「フォントを揃える」「方眼紙にする」「表示形式を揃える」が ON のときは、それぞれの設定もすべてのシート・すべてのセルに適用します。";
 			this.Finish.Click += new Microsoft.Office.Tools.Ribbon.RibbonControlEventHandler(this.Finish_Click);
 			// 
 			// AdjustFontBox
@@ -108,7 +122,7 @@ namespace EXLSXS
 			this.WindowViewBox.ScreenTip = "表示モード";
 			this.WindowViewBox.ShowLabel = true;
 			this.WindowViewBox.SizeString = "改ページ プレビュー";
-			this.WindowViewBox.SuperTip = "すべてのシートをこの表示モード（標準 / ページ レイアウト / 改ページ プレビュー）に揃えます。";
+			this.WindowViewBox.SuperTip = "すべてのシートをこの表示モード(標準 / ページ レイアウト / 改ページ プレビュー)に揃えます。";
 			this.WindowViewBox.SelectionChanged += new Microsoft.Office.Tools.Ribbon.RibbonControlEventHandler(this.WindowViewBox_SelectionChanged);
 			// 
 			// separator1
@@ -122,7 +136,7 @@ namespace EXLSXS
 			this.WindowZoomBox.ScreenTip = "倍率";
 			this.WindowZoomBox.ShowLabel = true;
 			this.WindowZoomBox.SizeString = "改ページ プレビュー";
-			this.WindowZoomBox.SuperTip = "すべてのシートの表示倍率をこの値（50%〜200%）に揃えます。";
+			this.WindowZoomBox.SuperTip = "すべてのシートの表示倍率をこの値(50%〜200%)に揃えます。";
 			this.WindowZoomBox.SelectionChanged += new Microsoft.Office.Tools.Ribbon.RibbonControlEventHandler(this.WindowZoomBox_SelectionChanged);
 			//
 			// FontRowBox
@@ -140,6 +154,74 @@ namespace EXLSXS
 			this.StackBox.Items.Add(this.FontRowBox);
 			this.StackBox.Name = "StackBox";
 			//
+			// separator2
+			//
+			this.separator2.Name = "separator2";
+			//
+			// AdjustGridBox
+			//
+			this.AdjustGridBox.Label = "方眼紙にする";
+			this.AdjustGridBox.Name = "AdjustGridBox";
+			this.AdjustGridBox.ScreenTip = "方眼紙にする";
+			this.AdjustGridBox.SuperTip = "ブックのすべてのシートのすべてのセルの行の高さ・列の幅を、右で選択したサイズの正方形に揃えます。";
+			this.AdjustGridBox.Click += new Microsoft.Office.Tools.Ribbon.RibbonControlEventHandler(this.AdjustGridBox_Click);
+			//
+			// GridSizeBox
+			//
+			this.GridSizeBox.Label = "マスのサイズ";
+			this.GridSizeBox.Name = "GridSizeBox";
+			this.GridSizeBox.ScreenTip = "マスのサイズ";
+			this.GridSizeBox.ShowLabel = false;
+			this.GridSizeBox.SizeString = "改ページ プレビュー";
+			this.GridSizeBox.SuperTip = "「方眼紙にする」が ON のとき、すべてのシートのセルをこのサイズの正方形に揃えます。";
+			//
+			// AdjustNumberFormatBox
+			//
+			this.AdjustNumberFormatBox.Label = "表示形式を揃える";
+			this.AdjustNumberFormatBox.Name = "AdjustNumberFormatBox";
+			this.AdjustNumberFormatBox.ScreenTip = "表示形式を揃える";
+			this.AdjustNumberFormatBox.SuperTip = "ブックのすべてのシートのすべてのセルの表示形式を、右で選択した形式に揃えます。";
+			this.AdjustNumberFormatBox.Click += new Microsoft.Office.Tools.Ribbon.RibbonControlEventHandler(this.AdjustNumberFormatBox_Click);
+			//
+			// NumberFormatBox
+			//
+			this.NumberFormatBox.Label = "表示形式";
+			this.NumberFormatBox.Name = "NumberFormatBox";
+			this.NumberFormatBox.ScreenTip = "表示形式";
+			this.NumberFormatBox.ShowLabel = false;
+			this.NumberFormatBox.SizeString = "改ページ プレビュー";
+			this.NumberFormatBox.SuperTip = "「表示形式を揃える」が ON のとき、すべてのシートのセルの表示形式をこの形式に揃えます。";
+			//
+			// GridRowBox
+			//
+			this.GridRowBox.BoxStyle = Microsoft.Office.Tools.Ribbon.RibbonBoxStyle.Horizontal;
+			this.GridRowBox.Items.Add(this.AdjustGridBox);
+			this.GridRowBox.Items.Add(this.GridSizeBox);
+			this.GridRowBox.Name = "GridRowBox";
+			//
+			// NumberFormatRowBox
+			//
+			this.NumberFormatRowBox.BoxStyle = Microsoft.Office.Tools.Ribbon.RibbonBoxStyle.Horizontal;
+			this.NumberFormatRowBox.Items.Add(this.AdjustNumberFormatBox);
+			this.NumberFormatRowBox.Items.Add(this.NumberFormatBox);
+			this.NumberFormatRowBox.Name = "NumberFormatRowBox";
+			//
+			// FormatStackBox
+			//
+			this.FormatStackBox.BoxStyle = Microsoft.Office.Tools.Ribbon.RibbonBoxStyle.Vertical;
+			this.FormatStackBox.Items.Add(this.GridRowBox);
+			this.FormatStackBox.Items.Add(this.NumberFormatRowBox);
+			this.FormatStackBox.Items.Add(this.LocalBuildLabel);
+			this.FormatStackBox.Name = "FormatStackBox";
+			//
+			// LocalBuildLabel
+			//
+			this.LocalBuildLabel.Label = "⚠ ローカル実行版";
+			this.LocalBuildLabel.Name = "LocalBuildLabel";
+			this.LocalBuildLabel.ScreenTip = "ローカル実行版";
+			this.LocalBuildLabel.SuperTip = "この EXLSXS はローカルでビルドされたバージョンです。Cloudflare R2 で配信されている正式なインストール版ではありません。";
+			this.LocalBuildLabel.Visible = false;
+			//
 			// MyRibbon
 			//
 			this.Name = "MyRibbon";
@@ -154,6 +236,12 @@ namespace EXLSXS
 			this.FontRowBox.PerformLayout();
 			this.StackBox.ResumeLayout(false);
 			this.StackBox.PerformLayout();
+			this.GridRowBox.ResumeLayout(false);
+			this.GridRowBox.PerformLayout();
+			this.NumberFormatRowBox.ResumeLayout(false);
+			this.NumberFormatRowBox.PerformLayout();
+			this.FormatStackBox.ResumeLayout(false);
+			this.FormatStackBox.PerformLayout();
 			this.ResumeLayout(false);
 		}
 
@@ -169,6 +257,15 @@ namespace EXLSXS
 		internal Microsoft.Office.Tools.Ribbon.RibbonDropDown WindowZoomBox;
 		internal Microsoft.Office.Tools.Ribbon.RibbonBox FontRowBox;
 		internal Microsoft.Office.Tools.Ribbon.RibbonBox StackBox;
+		internal Microsoft.Office.Tools.Ribbon.RibbonSeparator separator2;
+		internal Microsoft.Office.Tools.Ribbon.RibbonCheckBox AdjustGridBox;
+		internal Microsoft.Office.Tools.Ribbon.RibbonDropDown GridSizeBox;
+		internal Microsoft.Office.Tools.Ribbon.RibbonBox GridRowBox;
+		internal Microsoft.Office.Tools.Ribbon.RibbonCheckBox AdjustNumberFormatBox;
+		internal Microsoft.Office.Tools.Ribbon.RibbonDropDown NumberFormatBox;
+		internal Microsoft.Office.Tools.Ribbon.RibbonBox NumberFormatRowBox;
+		internal Microsoft.Office.Tools.Ribbon.RibbonBox FormatStackBox;
+		internal Microsoft.Office.Tools.Ribbon.RibbonLabel LocalBuildLabel;
 	}
 
 	partial class ThisRibbonCollection
