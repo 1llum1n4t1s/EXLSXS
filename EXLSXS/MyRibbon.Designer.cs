@@ -63,13 +63,11 @@ namespace EXLSXS
 			this.NumberFormatRowBox.SuspendLayout();
 			this.FormatStackBox.SuspendLayout();
 			this.SuspendLayout();
-			// 
+			//
 			// TabEXLSXS
-			// 
-			this.TabEXLSXS.ControlId.ControlIdType = Microsoft.Office.Tools.Ribbon.RibbonControlIdType.Office;
-			this.TabEXLSXS.ControlId.OfficeId = "TabHome";
+			//
 			this.TabEXLSXS.Groups.Add(this.GroupEXLSXS);
-			this.TabEXLSXS.Label = "TabHome";
+			this.TabEXLSXS.Label = "EXLSXS";
 			this.TabEXLSXS.Name = "TabEXLSXS";
 			// 
 			// GroupEXLSXS
