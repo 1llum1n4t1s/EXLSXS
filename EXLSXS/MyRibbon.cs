@@ -62,15 +62,27 @@ namespace EXLSXS
 			{
 			}
 
+			// フォント一覧の取得だけ Excel COM (StandardFont) に依存し失敗しうるため、
+			// COM 非依存の他の設定項目を巻き込まないよう独立した try/catch にする。
 			try
 			{
 				SetupFontBox();
+				AdjustFontBox.Checked = false;
+				FontBox.Enabled = false;
+			}
+			catch
+			{
+				AdjustFontBox.Checked = false;
+				AdjustFontBox.Enabled = false;
+				FontBox.Enabled = false;
+			}
+
+			try
+			{
 				SetupWindowViewBox();
 				SetupWindowZoomBox();
 				SetupGridSizeBox();
 				SetupNumberFormatBox();
-				AdjustFontBox.Checked = false;
-				FontBox.Enabled = false;
 				AdjustGridBox.Checked = false;
 				GridSizeBox.Enabled = false;
 				AdjustNumberFormatBox.Checked = false;
@@ -78,9 +90,6 @@ namespace EXLSXS
 			}
 			catch
 			{
-				AdjustFontBox.Checked = false;
-				AdjustFontBox.Enabled = false;
-				FontBox.Enabled = false;
 				AdjustGridBox.Checked = false;
 				AdjustGridBox.Enabled = false;
 				GridSizeBox.Enabled = false;
@@ -90,10 +99,6 @@ namespace EXLSXS
 			}
 		}
 
-		// 実行中の EXLSXS.dll が Velopack 正規インストール先 (%LocalAppData%\EXLSXS\current\vsto\)
-		// から読み込まれているかを判定する。一致しなければ bin\Debug/Release 等からの
-		// ローカルビルドとみなす。判定不能時は「ローカル実行」側に倒す (安全側: 開発中に
-		// マークが出ないよりは、production 誤検知でマークが出る方が実害が小さい)。
 		// 実行中の EXLSXS.dll が Velopack 正規インストール先 (%LocalAppData%\EXLSXS\current\vsto\)
 		// から読み込まれているかを判定する。一致しなければ bin\Debug/Release 等からのローカルビルドとみなす。
 		//

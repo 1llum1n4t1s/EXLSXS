@@ -68,8 +68,7 @@ namespace EXLSXS
 
 		private void Application_WorkbookDeactivate(Microsoft.Office.Interop.Excel.Workbook Wb)
 		{
-			bool flag = this.Application.Workbooks.Count == 1;
-			this.AddInRibbon.RefreshStatus(!flag);
+			this.AddInRibbon.RefreshStatus(this.Application.Workbooks.Count > 1);
 		}
 
 		internal void DoFinish()
@@ -196,7 +195,15 @@ namespace EXLSXS
 				// 画面更新を戻した後、最後に見ている（先頭）シートのスクロールを左上へ確実に戻す。
 				// ScrollRow/ScrollColumn は ScreenUpdating=false 中は表示へ即時反映されないことがあるため、
 				// このタイミングでもう一度リセットして、ユーザーが見るシートを左上表示で確定させる。
-				ScrollWindowToTopLeft(application.ActiveWindow);
+				// ActiveWindow の取得自体が COM 例外を投げることがある (ブックが閉じられた直後等) ため、
+				// 他の COM アクセスと同様に try/catch で保護する。
+				try
+				{
+					ScrollWindowToTopLeft(application.ActiveWindow);
+				}
+				catch
+				{
+				}
 			}
 		}
 
@@ -253,6 +260,8 @@ namespace EXLSXS
 			}
 		}
 
+		// 取得に失敗した場合は「可視」とみなして表示倍率・選択位置の変更へ進める
+		// (安全側: スキップして処理対象から漏らすより、続行する方が実害が小さい)。
 		private static bool IsWorksheetVisible(Microsoft.Office.Interop.Excel._Worksheet worksheet)
 		{
 			try
@@ -265,6 +274,8 @@ namespace EXLSXS
 			}
 		}
 
+		// 取得に失敗した場合は「保護されていない」とみなして書式設定へ進める
+		// (安全側: 保護扱いでスキップするより、意図した書式を適用する方を優先する)。
 		private static bool IsWorksheetProtected(Microsoft.Office.Interop.Excel._Worksheet worksheet)
 		{
 			try
