@@ -43,16 +43,18 @@ internal static class UpdateChecker
             Logger.Log($"Checking updates from '{settings.Source}' on channel '{settings.Channel}'.");
             statusProgress?.Report("Checking for updates.");
 
-            var checkTask = updateManager.CheckForUpdatesAsync();
-            var timeoutTask = Task.Delay(CheckTimeoutMs, cancellationToken);
-            var completedTask = await Task.WhenAny(checkTask, timeoutTask);
-            if (completedTask == timeoutTask)
+            UpdateInfo? updateInfo;
+            try
+            {
+                updateInfo = await updateManager.CheckForUpdatesAsync()
+                    .WaitAsync(TimeSpan.FromMilliseconds(CheckTimeoutMs), cancellationToken);
+            }
+            catch (TimeoutException)
             {
                 Logger.Log("Update check timed out.", LogLevel.Warning);
                 return new CheckResult(UpdateResult.Error, null, null, "Update check timed out.");
             }
 
-            var updateInfo = await checkTask;
             if (updateInfo == null)
             {
                 Logger.Log("No update is available.");

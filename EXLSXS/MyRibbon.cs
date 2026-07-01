@@ -62,15 +62,34 @@ namespace EXLSXS
 			{
 			}
 
+			// フォント一覧の取得だけ Excel COM (StandardFont) に依存し失敗しうるため、
+			// COM 非依存の他の設定項目を巻き込まないよう独立した try/catch にする。
 			try
 			{
 				SetupFontBox();
-				SetupWindowViewBox();
-				SetupWindowZoomBox();
-				SetupGridSizeBox();
-				SetupNumberFormatBox();
 				AdjustFontBox.Checked = false;
 				FontBox.Enabled = false;
+			}
+			catch
+			{
+				AdjustFontBox.Checked = false;
+				AdjustFontBox.Enabled = false;
+				FontBox.Enabled = false;
+			}
+
+			try
+			{
+				SetupWindowViewBox();
+				SetupWindowZoomBox();
+			}
+			catch
+			{
+			}
+
+			try
+			{
+				SetupGridSizeBox();
+				SetupNumberFormatBox();
 				AdjustGridBox.Checked = false;
 				GridSizeBox.Enabled = false;
 				AdjustNumberFormatBox.Checked = false;
@@ -78,9 +97,6 @@ namespace EXLSXS
 			}
 			catch
 			{
-				AdjustFontBox.Checked = false;
-				AdjustFontBox.Enabled = false;
-				FontBox.Enabled = false;
 				AdjustGridBox.Checked = false;
 				AdjustGridBox.Enabled = false;
 				GridSizeBox.Enabled = false;
@@ -90,10 +106,6 @@ namespace EXLSXS
 			}
 		}
 
-		// 実行中の EXLSXS.dll が Velopack 正規インストール先 (%LocalAppData%\EXLSXS\current\vsto\)
-		// から読み込まれているかを判定する。一致しなければ bin\Debug/Release 等からの
-		// ローカルビルドとみなす。判定不能時は「ローカル実行」側に倒す (安全側: 開発中に
-		// マークが出ないよりは、production 誤検知でマークが出る方が実害が小さい)。
 		// 実行中の EXLSXS.dll が Velopack 正規インストール先 (%LocalAppData%\EXLSXS\current\vsto\)
 		// から読み込まれているかを判定する。一致しなければ bin\Debug/Release 等からのローカルビルドとみなす。
 		//
@@ -152,6 +164,10 @@ namespace EXLSXS
 
 		private void SetupFontBox()
 		{
+			// StandardFont の取得は COM 往復で失敗しうるため、重いプレビュー画像生成ループの前に
+			// 済ませておく (失敗時に無駄な画像生成をせず即座に catch へ抜けられる)。
+			string standardFont = Globals.ThisAddIn.Application.StandardFont;
+
 			// Excel のフォント一覧のように、各フォント名をそのフォント自身で描画したプレビュー画像を付ける。
 			// (画像生成でリボン Load が数百 ms 伸び、生成した Bitmap は UI 生存中常駐するが、
 			//  「選択するフォントの見た目が分かる」ことを優先する。)
@@ -173,8 +189,6 @@ namespace EXLSXS
 				fontFamily.Dispose();
 			}
 
-			// StandardFont の取得は COM 往復なので、述語内で毎回評価せずループ前に 1 回退避する。
-			string standardFont = Globals.ThisAddIn.Application.StandardFont;
 			RibbonDropDownItem selectedFont = FontBox.Items.FirstOrDefault(item => item.Label == standardFont);
 			if (selectedFont != null)
 			{

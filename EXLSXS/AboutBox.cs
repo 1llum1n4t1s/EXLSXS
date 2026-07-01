@@ -27,7 +27,7 @@ namespace EXLSXS
 		{
 			try
 			{
-				Process.Start(this.HomePageLink.Text);
+				Process.Start(new ProcessStartInfo(this.HomePageLink.Text) { UseShellExecute = true });
 			}
 			catch
 			{
