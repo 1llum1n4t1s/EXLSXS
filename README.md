@@ -21,7 +21,7 @@
 
 1. [インストーラー (Windows x64)](https://exlsxs.nephilim.jp/EXLSXS-win-Setup.exe) をダウンロード
 2. ダウンロードした `EXLSXS-win-Setup.exe` を実行
-3. Excel を起動すると、リボンに **EXLSXS** グループが追加されます
+3. Excel を起動すると、リボンに **EXLSXS** タブが追加されます
 
 管理者権限は不要です。インストーラーが前提条件（.NET Framework 4.8.1 / VSTO ランタイム）の有無を確認し、不足していれば導入します。更新は自動で適用されます。
 
