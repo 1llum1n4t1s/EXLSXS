@@ -68,7 +68,15 @@ namespace EXLSXS
 
 		private void Application_WorkbookDeactivate(Microsoft.Office.Interop.Excel.Workbook Wb)
 		{
-			this.AddInRibbon.RefreshStatus(this.Application.Workbooks.Count > 1);
+			// Workbooks.Count の COM アクセスは Excel がビジー状態のとき例外を投げうるため、
+			// 他の COM アクセスと同様 try/catch で保護する (失敗時は Finish の有効状態を更新しないだけ)。
+			try
+			{
+				this.AddInRibbon.RefreshStatus(this.Application.Workbooks.Count > 1);
+			}
+			catch
+			{
+			}
 		}
 
 		internal void DoFinish()

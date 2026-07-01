@@ -157,6 +157,10 @@ namespace EXLSXS
 
 		private void SetupFontBox()
 		{
+			// StandardFont の取得は COM 往復で失敗しうるため、重いプレビュー画像生成ループの前に
+			// 済ませておく (失敗時に無駄な画像生成をせず即座に catch へ抜けられる)。
+			string standardFont = Globals.ThisAddIn.Application.StandardFont;
+
 			// Excel のフォント一覧のように、各フォント名をそのフォント自身で描画したプレビュー画像を付ける。
 			// (画像生成でリボン Load が数百 ms 伸び、生成した Bitmap は UI 生存中常駐するが、
 			//  「選択するフォントの見た目が分かる」ことを優先する。)
@@ -178,8 +182,6 @@ namespace EXLSXS
 				fontFamily.Dispose();
 			}
 
-			// StandardFont の取得は COM 往復なので、述語内で毎回評価せずループ前に 1 回退避する。
-			string standardFont = Globals.ThisAddIn.Application.StandardFont;
 			RibbonDropDownItem selectedFont = FontBox.Items.FirstOrDefault(item => item.Label == standardFont);
 			if (selectedFont != null)
 			{
