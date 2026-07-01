@@ -81,6 +81,13 @@ namespace EXLSXS
 			{
 				SetupWindowViewBox();
 				SetupWindowZoomBox();
+			}
+			catch
+			{
+			}
+
+			try
+			{
 				SetupGridSizeBox();
 				SetupNumberFormatBox();
 				AdjustGridBox.Checked = false;
