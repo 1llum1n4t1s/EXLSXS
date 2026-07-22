@@ -1,4 +1,6 @@
-# EXLSXS
+# CLAUDE.md — EXLSXS
+
+This file provides guidance to Claude Code and other coding agents working in this repository.
 
 Excel 用 VSTO アドイン（リボンから全シートの表示倍率・表示モード・フォント・選択位置を一括整形）を Velopack で配布するプロジェクト。
 
