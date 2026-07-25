@@ -8,7 +8,7 @@ public class UpdateCheckerTests
     public void ShouldUseGithubSource_ExplicitGithub_IsTrue()
     {
         // SourceKind を明示している場合は URL のホストに関わらずそれを優先する。
-        var settings = new UpdateSettings { SourceKind = UpdateSourceKind.Github, Source = "https://exlsxs.nephilim.jp" };
+        var settings = new UpdateSettings { SourceKind = UpdateSourceKind.Github, Source = "https://exlsxs.kagayoi.com" };
 
         Assert.True(UpdateChecker.ShouldUseGithubSource(settings));
     }
@@ -23,7 +23,7 @@ public class UpdateCheckerTests
 
     [Theory]
     [InlineData("https://github.com/owner/repo", true)]
-    [InlineData("https://exlsxs.nephilim.jp", false)]
+    [InlineData("https://exlsxs.kagayoi.com", false)]
     [InlineData("not a url", false)]
     public void ShouldUseGithubSource_Auto_DetectsGithubHost(string source, bool expected)
     {

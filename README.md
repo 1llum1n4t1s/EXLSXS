@@ -4,7 +4,7 @@
 
 リボンで選んだ表示倍率・表示モードを全シートへ一括適用し、必要ならフォントを統一し、各シートのカーソルを A1 に戻します。1 枚ずつ直す手間がなくなり、誰が開いても同じ見た目で始められます。
 
-無料・オープンソース。Web サイト: <https://exlsxs.nephilim.jp/>
+無料・オープンソース。Web サイト: <https://exlsxs.kagayoi.com/>
 
 ## できること
 
@@ -19,7 +19,7 @@
 
 ## インストール
 
-1. [インストーラー (Windows x64)](https://exlsxs.nephilim.jp/EXLSXS-win-Setup.exe) をダウンロード
+1. [インストーラー (Windows x64)](https://exlsxs.kagayoi.com/EXLSXS-win-Setup.exe) をダウンロード
 2. ダウンロードした `EXLSXS-win-Setup.exe` を実行
 3. Excel を起動すると、リボンに **EXLSXS** タブが追加されます
 

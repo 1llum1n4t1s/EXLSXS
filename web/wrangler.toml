@@ -1,5 +1,5 @@
 # EXLSXS ランディングページ配信 Worker。
-# exlsxs.nephilim.jp は R2 バケット exlsxs-updates のカスタムドメイン。
+# exlsxs.kagayoi.com は R2 バケット exlsxs-updates のカスタムドメイン。
 # 下のルートを被せると Worker が Custom Domain より優先され、worker.js が
 # "/" のみランディングページを返し、それ以外のパスは R2 にそのまま委譲する。
 name = "exlsxs-landing"
@@ -7,6 +7,7 @@ main = "worker.js"
 compatibility_date = "2026-05-01"
 
 routes = [
+  { pattern = "exlsxs.kagayoi.com/*", zone_name = "kagayoi.com" },
   { pattern = "exlsxs.nephilim.jp/*", zone_name = "nephilim.jp" },
 ]
 

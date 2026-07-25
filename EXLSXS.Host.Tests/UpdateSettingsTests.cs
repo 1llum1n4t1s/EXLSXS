@@ -18,7 +18,7 @@ public class UpdateSettingsTests
     [Theory]
     [InlineData("", false)]
     [InlineData("   ", false)]
-    [InlineData("https://exlsxs.nephilim.jp", true)]
+    [InlineData("https://exlsxs.kagayoi.com", true)]
     public void IsConfigured_TracksSource(string source, bool expected)
     {
         var settings = new UpdateSettings { Source = source };
