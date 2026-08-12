@@ -45,3 +45,12 @@ pnpm dlx wrangler@4 deploy --config web/wrangler.toml
 - **リボン/コードを変えたら `%LOCALAPPDATA%\assembly\dl3` を消してから Excel を起動して動作確認する**: EXLSXS は strong-name 付き + バージョン固定 (`1.0.2.0`) なので、VSTO/Fusion はアセンブリ identity でシャドウコピーをキャッシュし、**同一バージョンの新ビルドを「同じ物」とみなして `dl3` の旧コピーを読み続ける**（bin\Debug/Release を再ビルドしても Excel に反映されない）。dev 反復での確認手順は「Excel 終了 → `rm -rf %LOCALAPPDATA%/assembly/dl3` → Excel 起動」。Debug と Release は identity が同一なので Fusion がどちらのコピーを使うか不定 → 確実を期すなら両構成を再ビルドしてからキャッシュを消す。リリース時は `/vava` でバージョンが上がり identity が変わるため、この罠はエンドユーザーには出ない（dev 専用）
 - **ランディングページのデプロイは `pnpm dlx wrangler@4 deploy --config web/wrangler.toml` をリポジトリルートから実行する**: `pnpm -C web dlx wrangler@4 deploy` は `-C` が効かず CWD がリポジトリルートのまま wrangler が起動し、`web/wrangler.toml` を読まずに「assets 配信 Worker」を `my-worker` 名で `*.workers.dev` に誤デプロイする（同時にルートへ `wrangler.jsonc` / `.wrangler/` を生成し `.gitignore` を書き換える）。`--config web/wrangler.toml` でファイルを明示すると設定ディレクトリ基準で動き、`exlsxs-landing` を `exlsxs.kagayoi.com/*` route に正しく載せられる。本番前に `--dry-run` で `Total Upload` が ~64 KiB（`index.html` が Text モジュールでバンドルされた証拠）になることを確認する（0.4 KiB なら誤った assets モードに落ちている）。`git push` は GitHub を更新するだけで本番サイトは変わらないため、`web/index.html` を変えたらこのコマンドで明示デプロイする
 - **Velopack 配信の固定名ファイルはアップロード後に Cloudflare キャッシュをパージする**: `EXLSXS-win-Setup.exe` / `releases.win.json` / `RELEASES` / `EXLSXS-win-Portable.zip` / `assets.win.json` は URL 不変で毎リリース中身が変わるため、R2 へ上げても Cloudflare エッジが旧版を `Cache-Control: max-age=14400`（4 時間）保持し、新規ダウンロード・自動更新が旧バージョンを掴む（症状: 配信 manifest は新版なのにページから DL した Setup.exe が旧版。`CF-Cache-Status: HIT` + 古い `Last-Modified` で判別できる）。`scripts/release-local.ps1` がアップロード直後に zone を `purge_cache` API でパージして伝播を確定する（バージョン付き nupkg は URL が一意なのでパージ不要）。手動アップロード時も同様にパージする。配信確認（manifest 一致チェック）は `Cache-Control: no-cache` でオリジンを見るためキャッシュ問題を検知できない点に注意する
+
+## ドメイン移行（2026-07 開始・期限 2027/05/31）
+
+屋号を **Kagayoi** に統一したため、配信ドメインを `nephilim.jp` から `kagayoi.com` へ移行中。方針の全体像はユーザーグローバルの `CLAUDE.md` §屋号とドメイン を参照する。
+
+- **旧ドメイン `nephilim.jp` はレジストラで廃止申請済みで 2027/05/31 に失効する**（延長しない）。それまでに出荷済みバイナリを新ドメインへ移行しきる。
+- 旧ホストの Worker route / custom domain は**期限まで消さない**。消すと出荷済みアプリの自動更新が止まる。
+- `nephilim.jp` の Redirect Rules は `/` だけを 301 する。`releases.*.json` / `*.nupkg` / `*-Setup.exe` は転送せず R2 が配信を続ける。
+- 配信は `exlsxs.kagayoi.com`（R2 `exlsxs-updates`）。旧 `exlsxs.nephilim.jp` は route に併記して残してある。
