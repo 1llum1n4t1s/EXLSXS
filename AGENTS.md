@@ -21,6 +21,9 @@ Excel 用 VSTO アドイン（リボンから全シートの表示倍率・表�
 MSBuild EXLSXS.slnx /t:Restore,Rebuild /p:Configuration=Release /p:Platform="Any CPU"
 dotnet build EXLSXS.Host/EXLSXS.Host.csproj -c Release
 
+# ホストのテスト
+dotnet test EXLSXS.Host.Tests/EXLSXS.Host.Tests.csproj -c Release
+
 # 署名付きパック（R2 アップロード無し）
 pwsh -NoProfile -File scripts/release-local.ps1 -SkipUpload
 
@@ -43,7 +46,7 @@ pnpm dlx wrangler@4 deploy --config web/wrangler.toml
   - **(1) csproj 側**: `<ProjectExtensions>` の `<FlavorProperties GUID="{BAA0C2D2-18E2-41B9-852F-F413020CAA33}">` に `ProjectCreationSetting="1"` 付き `<ProjectProperties>` と `<Host Name="Excel" GeneratedCodeNamespace="EXLSXS"><HostItem ... Blueprint="ThisAddIn.Designer.xml" GeneratedCode="ThisAddIn.Designer.cs" /></Host>` を持たせ、`ThisAddIn.Designer.xml`（Blueprint）と `ThisAddIn.Designer.cs`（生成コード相当: `partial class ThisAddIn` の生成メンバ + `Globals` + `ThisRibbonCollection`）を実体として置く。`ThisAddIn.cs` はユーザーコードのみにする。この `<Host>`/`<HostItem>` 宣言が無いとフレーバー初期化がアサート (`GUID が空です。 パラメーター名:serviceGuid`) で失敗する（MSBuild ビルドは Host 宣言が無くても通るため気付きにくい）。
   - **(2) `.slnx` 側**: VSTO プロジェクト行は `<Project Path="EXLSXS/EXLSXS.csproj" />` と **Type 属性なし** で書く。Type 属性なしだと VS は拡張子で C# 基底型を判定し csproj の `<ProjectTypeGuids>`（`{BAA0C2D2};{FAE04EC0}` の 2 段チェーン）を読んでフレーバーをアグリゲートする。`Type="{BAA0C2D2-...}"` を付けると**外側フレーバー GUID だけ**が指定され基底型が欠けてアグリゲーションが壊れ「読み込みに失敗しました」になる（過去にこの Type 属性を回避策として入れていたが逆効果だった）。
   - 検証: `EXLSXS.csproj` を直接開く / `.slnx`（Type 無し）を開く のどちらでも `ソリューション 'EXLSXS' (3/3 のプロジェクト)` で EXLSXS が Excel ホストノード付きでロードされること。SDK のホスト/テストは Type 属性不要。
-- **リボン/コードを変えたら `%LOCALAPPDATA%\assembly\dl3` を消してから Excel を起動して動作確認する**: EXLSXS は strong-name 付き + バージョン固定 (`1.0.2.0`) なので、VSTO/Fusion はアセンブリ identity でシャドウコピーをキャッシュし、**同一バージョンの新ビルドを「同じ物」とみなして `dl3` の旧コピーを読み続ける**（bin\Debug/Release を再ビルドしても Excel に反映されない）。dev 反復での確認手順は「Excel 終了 → `rm -rf %LOCALAPPDATA%/assembly/dl3` → Excel 起動」。Debug と Release は identity が同一なので Fusion がどちらのコピーを使うか不定 → 確実を期すなら両構成を再ビルドしてからキャッシュを消す。リリース時は `/vava` でバージョンが上がり identity が変わるため、この罠はエンドユーザーには出ない（dev 専用）
+- **リボン/コードを変えたら `%LOCALAPPDATA%\assembly\dl3` を消してから Excel を起動して動作確認する**: EXLSXS は strong-name 付きで、同じ `<Version>` から生成した `$(Version).0` のビルドは同じアセンブリ identity を持つ。VSTO/Fusion は**同一バージョンの新ビルドを「同じ物」とみなして `dl3` の旧コピーを読み続ける**ため、bin\Debug/Release を再ビルドしても Excel に反映されない。dev 反復での確認手順は「Excel 終了 → `rm -rf %LOCALAPPDATA%/assembly/dl3` → Excel 起動」。Debug と Release は identity が同一なので Fusion がどちらのコピーを使うか不定 → 確実を期すなら両構成を再ビルドしてからキャッシュを消す。リリース時は `/vava` でバージョンが上がり identity が変わるため、この罠はエンドユーザーには出ない（dev 専用）
 - **ランディングページのデプロイは `pnpm dlx wrangler@4 deploy --config web/wrangler.toml` をリポジトリルートから実行する**: `pnpm -C web dlx wrangler@4 deploy` は `-C` が効かず CWD がリポジトリルートのまま wrangler が起動し、`web/wrangler.toml` を読まずに「assets 配信 Worker」を `my-worker` 名で `*.workers.dev` に誤デプロイする（同時にルートへ `wrangler.jsonc` / `.wrangler/` を生成し `.gitignore` を書き換える）。`--config web/wrangler.toml` でファイルを明示すると設定ディレクトリ基準で動き、`exlsxs-landing` を `exlsxs.kagayoi.com/*` route に正しく載せられる。本番前に `--dry-run` で `Total Upload` が ~64 KiB（`index.html` が Text モジュールでバンドルされた証拠）になることを確認する（0.4 KiB なら誤った assets モードに落ちている）。`git push` は GitHub を更新するだけで本番サイトは変わらないため、`web/index.html` を変えたらこのコマンドで明示デプロイする
 - **Velopack 配信の固定名ファイルはアップロード後に Cloudflare キャッシュをパージする**: `EXLSXS-win-Setup.exe` / `releases.win.json` / `RELEASES` / `EXLSXS-win-Portable.zip` / `assets.win.json` は URL 不変で毎リリース中身が変わるため、R2 へ上げても Cloudflare エッジが旧版を `Cache-Control: max-age=14400`（4 時間）保持し、新規ダウンロード・自動更新が旧バージョンを掴む（症状: 配信 manifest は新版なのにページから DL した Setup.exe が旧版。`CF-Cache-Status: HIT` + 古い `Last-Modified` で判別できる）。`scripts/release-local.ps1` がアップロード直後に zone を `purge_cache` API でパージして伝播を確定する（バージョン付き nupkg は URL が一意なのでパージ不要）。手動アップロード時も同様にパージする。配信確認（manifest 一致チェック）は `Cache-Control: no-cache` でオリジンを見るためキャッシュ問題を検知できない点に注意する
 

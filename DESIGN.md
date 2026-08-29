@@ -25,7 +25,7 @@ EXLSXSは、Excelブック内の全ワークシートへ表示モード、表示
 2. 実行ボタンが`ThisAddIn.DoFinish`を呼び、現在のリボン設定を処理用の値へ確定する。
 3. アクティブブックのワークシートを走査し、保護されていないシートへフォント、行高・列幅、表示形式を適用する。
 4. 表示中のシートだけをアクティブ化し、表示モード、倍率、A1選択、スクロール位置を更新する。非表示シートはアクティブ化しない。
-5. 最後に一番左の表示シートをアクティブ化し、Excelの`ScreenUpdating`を処理前の状態へ戻す。
+5. 最後に一番左の表示シートをアクティブ化し、Excelの`ScreenUpdating`を処理前の状態へ戻す。処理できなかったシートは他のシートを止めずに収集し、対象名をまとめて利用者へ通知する。
 
 ### インストールと登録
 
@@ -36,10 +36,10 @@ EXLSXSは、Excelブック内の全ワークシートへ表示モード、表示
 
 ### サイレント自動更新
 
-1. Windows起動時にホストが`--update-check`で実行され、VSTO登録を保守してから更新確認を始める。この経路では前提条件installerを起動せず、予期しないUAC表示を避ける。
+1. Windows起動時にホストが`--update-check`で実行され、VSTO登録を保守してから更新確認を始める。登録保守に失敗してもログを残して更新確認は続行する。この経路では前提条件installerを起動せず、予期しないUAC表示を避ける。
 2. `UpdateSettings`が`appsettings.json`を読み、その後`EXLSXS_UPDATE_*`環境変数で上書きする。更新元が未設定、またはVelopack install外なら確認を終了する。
 3. `UpdateChecker`が設定に応じて通常URLまたはGitHub sourceを選び、timeout付きで更新確認とdownloadを行う。
-4. download後、`UpdatePackageTrustVerifier`が`EXLSXS.Host.exe`、`EXLSXS.Host.dll`、`EXLSXS.dll`の署名、証明書chain、期待thumbprintとsubjectを検証する。
+4. download後、`UpdatePackageTrustVerifier`が`EXLSXS.Host.exe`、`EXLSXS.Host.dll`、`EXLSXS.dll`の署名、証明書chain、期待thumbprintとsubjectを検証する。署名者証明書は`WinVerifyTrust`が成功した同じprovider stateから取得し、信頼判定と発行元照合を分離しない。
 5. 信頼検証に成功したパッケージだけを`ApplyUpdatesAndExit`へ渡す。未信頼または検証設定なしのパッケージは適用しない。
 
 ### パッケージ作成と公開
@@ -68,7 +68,7 @@ EXLSXSは、Excelブック内の全ワークシートへ表示モード、表示
 - VSTOのExcel host宣言とdesigner生成物、および`.slnx`のType属性なし構成を維持する。
 - COM eventは埋め込みinterop metadataと互換な`+=`で購読する。
 - install時だけ前提条件の自動導入と`LoadBehavior`強制を許可し、update・通常起動ではユーザーまたはOfficeが無効化した状態を保持する。
-- 更新パッケージはpublisher trust設定と必須3ファイルの署名検証を通過するまで適用しない。
+- 更新パッケージはpublisher trust設定と必須3ファイルの署名検証を通過するまで適用しない。発行元照合には`WinVerifyTrust`の検証済みprovider stateから得た署名者だけを使う。
 - リリースの固定名ファイルを更新した後はCloudflare cacheをpurgeし、公開manifestとの一致を確認する。
 - 旧`nephilim.jp`の更新配信経路は2027-05-31まで維持し、配信ファイルをroot redirectへ巻き込まない。
 
@@ -77,5 +77,6 @@ EXLSXSは、Excelブック内の全ワークシートへ表示モード、表示
 - **VSTO本体とVelopackホストの分離**: Excel統合は.NET Framework/VSTOへ残し、installer・更新・署名検証は.NET 10ホストへ集約する。実行環境は二重になるが、VSTO互換性と現行の配布機能を両立できる。
 - **ユーザー単位の登録**: 設定、VSTO登録、起動時更新をHKCUへ置く。端末全体への管理者権限を不要にする代わりに、Windows userごとに登録状態を持つ。
 - **シート単位のbest-effort処理**: COM例外や保護・非表示状態でブック全体を中断せず、適用可能なシートを処理する。部分適用になり得るため、保護シートでは書式変更を明示的に避ける。
+- **署名検証と署名者特定の一体化**: Authenticodeの信頼判定と発行元証明書の取得に同じ`WinVerifyTrust` stateを使う。Windowsの信頼chainへ委譲しつつ、検証対象と無関係な埋め込み証明書を発行元として採用しない。
 - **Worker routeとR2 custom domainの重ね合わせ**: 同じhostで案内ページと更新配信を提供し、非root pathはR2へ透過委譲する。構成は簡潔になる一方、Workerは更新ファイルのRange、cache、Content-Typeを変更しないことが前提となる。
 - **versionと配布toolの固定**: 製品versionを一箇所へ集約し、WranglerとVelopack CLIは検証済みversionへ固定する。自動追随より再現可能な署名・配布を優先する。
