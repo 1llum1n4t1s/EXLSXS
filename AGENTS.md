@@ -1,6 +1,6 @@
-# CLAUDE.md — EXLSXS
+# AGENTS.md — EXLSXS
 
-This file provides guidance to Claude Code and other coding agents working in this repository.
+This file provides guidance to Codex and other coding agents working in this repository.
 
 Excel 用 VSTO アドイン（リボンから全シートの表示倍率・表示モード・フォント・選択位置を一括整形）を Velopack で配布するプロジェクト。
 
@@ -12,6 +12,7 @@ Excel 用 VSTO アドイン（リボンから全シートの表示倍率・表�
 - `scripts/release-local.ps1` — 署名付きローカルリリース（ビルド → 署名 → 検証 → R2 アップロード）
 - `web/` — ランディングページ + Cloudflare Worker（`exlsxs.kagayoi.com`）
 - `Directory.Build.props` — **バージョンの唯一の定義場所**（`<Version>`、他は全部ここから導出）
+- `DESIGN.md` — 現行システムの構造、責務、データフロー、設計判断の正本
 
 ## 主要コマンド
 
