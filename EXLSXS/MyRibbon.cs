@@ -24,12 +24,12 @@ namespace EXLSXS
 
 		public Excel.XlWindowView AdjustView
 		{
-			get { return (Excel.XlWindowView)WindowViewBox.SelectedItem.Tag; }
+			get { return WindowViewBox.SelectedItem?.Tag is Excel.XlWindowView view ? view : Excel.XlWindowView.xlNormalView; }
 		}
 
 		public int AdjustZoom
 		{
-			get { return (int)WindowZoomBox.SelectedItem.Tag; }
+			get { return WindowZoomBox.SelectedItem?.Tag is int zoom ? zoom : 100; }
 		}
 
 		public bool AdjustGrid
@@ -159,7 +159,14 @@ namespace EXLSXS
 
 		private void Finish_Click(object sender, RibbonControlEventArgs e)
 		{
-			Globals.ThisAddIn.DoFinish();
+			try
+			{
+				Globals.ThisAddIn.DoFinish();
+			}
+			catch (Exception ex)
+			{
+				UIHelper.ShowErrorDialog(ex);
+			}
 		}
 
 		private void SetupFontBox()
@@ -171,13 +178,10 @@ namespace EXLSXS
 			// Excel のフォント一覧のように、各フォント名をそのフォント自身で描画したプレビュー画像を付ける。
 			// (画像生成でリボン Load が数百 ms 伸び、生成した Bitmap は UI 生存中常駐するが、
 			//  「選択するフォントの見た目が分かる」ことを優先する。)
-			foreach (FontFamily fontFamily in new InstalledFontCollection().Families)
+			using (InstalledFontCollection installedFonts = new InstalledFontCollection())
+			foreach (FontFamily fontFamily in installedFonts.Families)
 			{
-				if (fontFamily.IsStyleAvailable(FontStyle.Regular)
-					&& fontFamily.IsStyleAvailable(FontStyle.Bold)
-					&& fontFamily.IsStyleAvailable(FontStyle.Italic)
-					&& fontFamily.IsStyleAvailable(FontStyle.Strikeout)
-					&& fontFamily.IsStyleAvailable(FontStyle.Underline))
+				if (fontFamily.IsStyleAvailable(FontStyle.Regular))
 				{
 					Bitmap image = CreateFontPreviewImage(fontFamily);
 					RibbonDropDownItem item = Globals.Factory.GetRibbonFactory().CreateRibbonDropDownItem();

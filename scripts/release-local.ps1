@@ -39,11 +39,17 @@ $SigningThumbprint = '6285702C9AF1FCFE3D9FE815B7F7F625508130C0'
 $SignParams      = "/n `"$CertSubjectName`" /fd SHA256 /td SHA256 /tr http://time.certum.pl"
 $WranglerVersion = '4.92.0'   # サプライチェーン対策でバージョン固定
 
-# 更新パッケージ内で Authenticode 署名を要求する必須ファイル。
-# Host.exe/Host.dll/EXLSXS.dll はクライアントの UpdatePackageTrustVerifier が起動時に検証する。
+# 更新パッケージ内で EXLSXS 発行者の Authenticode 署名を要求する必須ファイル。
+# Host.exe/Host.dll/EXLSXS.dll はクライアントの UpdatePackageTrustVerifier が適用前に検証する。
 # vsto/setup.exe は前提ブートストラッパーで、PrerequisiteChecker が昇格起動の直前に署名者を検証する
 # (差し替えた setup.exe の UAC 昇格実行を防ぐ)。いずれも本証明書で署名済みであることを出荷前に保証する。
-$RequiredSignedSuffixes = @('EXLSXS.Host.exe', 'EXLSXS.Host.dll', 'EXLSXS.dll.deploy', 'EXLSXS.dll', 'setup.exe')
+$RequiredSignedEntries = @(
+    [pscustomobject]@{ Label = 'EXLSXS host'; Suffixes = @('EXLSXS.Host.exe') },
+    [pscustomobject]@{ Label = 'EXLSXS host assembly'; Suffixes = @('EXLSXS.Host.dll') },
+    [pscustomobject]@{ Label = 'EXLSXS VSTO assembly'; Suffixes = @('EXLSXS.dll.deploy', 'EXLSXS.dll') },
+    [pscustomobject]@{ Label = 'Velopack updater'; Suffixes = @('Squirrel.exe') },
+    [pscustomobject]@{ Label = 'VSTO prerequisite bootstrapper'; Suffixes = @('setup.exe') }
+)
 
 $RepoRoot   = Split-Path -Parent $PSScriptRoot
 Set-Location $RepoRoot
@@ -108,7 +114,8 @@ if (-not (Test-Path $ReleaseDir)) { throw "Velopack 出力が見つかりませ�
 
 # ---- 2. 署名検証 ----
 # (a) Setup.exe など出力直下の exe が本証明書で Valid 署名されているか
-# (b) nupkg 内の必須ファイル (Host.exe/.dll, VSTO dll) が Authenticode 署名されているか
+# (b) nupkg 内の全 PE が Authenticode 署名され、EXLSXS 発行者または Microsoft の署名か
+# (c) Host.exe/.dll, VSTO dll が EXLSXS 発行者の署名か
 #     = クライアントの UpdatePackageTrustVerifier が受理する状態かをリリース前に保証する
 Write-Host '== 署名検証 ==' -ForegroundColor Cyan
 foreach ($exe in Get-ChildItem $ReleaseDir -Filter '*.exe') {
@@ -127,9 +134,36 @@ New-Item -ItemType Directory -Path $verifyDir -Force | Out-Null
 try {
     $zip = [System.IO.Compression.ZipFile]::OpenRead($fullNupkg.FullName)
     try {
-        foreach ($suffix in $RequiredSignedSuffixes) {
-            $entry = $zip.Entries | Where-Object { $_.FullName.Replace('\','/').EndsWith("/$suffix") -or $_.FullName -eq $suffix } | Select-Object -First 1
-            if (-not $entry) { continue }  # .deploy/.dll はどちらか一方が入る
+        $portableEntries = @($zip.Entries | Where-Object {
+            $name = $_.FullName -replace '\.deploy$',''
+            [IO.Path]::GetExtension($name) -in '.exe', '.dll'
+        })
+        if ($portableEntries.Count -eq 0) { throw 'nupkg 内に PE ファイルが見つかりません' }
+
+        foreach ($entry in $portableEntries) {
+            $dest = Join-Path $verifyDir "$([Guid]::NewGuid().ToString('N'))-$([IO.Path]::GetFileName($entry.FullName) -replace '\.deploy$','')"
+            [System.IO.Compression.ZipFileExtensions]::ExtractToFile($entry, $dest, $true)
+            $sig = Get-AuthenticodeSignature $dest
+            if ($sig.Status -ne 'Valid') {
+                throw "nupkg 内 '$($entry.FullName)' の Authenticode 署名が無効 ($($sig.Status))。"
+            }
+
+            $simpleName = $sig.SignerCertificate.GetNameInfo([Security.Cryptography.X509Certificates.X509NameType]::SimpleName, $false)
+            $subjectParts = $sig.SignerCertificate.SubjectName.Decode(
+                [Security.Cryptography.X509Certificates.X500DistinguishedNameFlags]::UseNewLines) -split "`r?`n"
+            $isExpectedPublisher = $simpleName -eq $CertSubjectName
+            $isMicrosoftPublisher = $subjectParts.Trim() -contains 'O=Microsoft Corporation'
+            if (-not $isExpectedPublisher -and -not $isMicrosoftPublisher) {
+                throw "nupkg 内 '$($entry.FullName)' の署名者が許可対象外です: $($sig.SignerCertificate.Subject)"
+            }
+        }
+
+        foreach ($required in $RequiredSignedEntries) {
+            $entry = $zip.Entries | Where-Object {
+                $entryName = $_.FullName.Replace('\','/')
+                @($required.Suffixes | Where-Object { $entryName.EndsWith("/$_") -or $entryName -eq $_ }).Count -gt 0
+            } | Select-Object -First 1
+            if (-not $entry) { throw "nupkg 内に必須ファイル '$($required.Label)' が見つかりません" }
             $dest = Join-Path $verifyDir ([IO.Path]::GetFileName($entry.FullName) -replace '\.deploy$','')
             [System.IO.Compression.ZipFileExtensions]::ExtractToFile($entry, $dest, $true)
             $sig = Get-AuthenticodeSignature $dest
@@ -141,6 +175,18 @@ try {
                 throw "nupkg 内 '$($entry.FullName)' の署名者 thumbprint 不一致。期待 $SigningThumbprint, 実際 $thumb"
             }
             Write-Host "  ✅ nupkg: $($entry.FullName) → Valid / thumbprint 一致"
+        }
+
+        $settingsEntries = @($zip.Entries | Where-Object { $_.FullName.Replace('\','/') -eq 'lib/app/appsettings.json' })
+        if ($settingsEntries.Count -ne 1) {
+            throw "nupkg 内の lib/app/appsettings.json は1件必須です (実際: $($settingsEntries.Count)件)"
+        }
+        $reader = [IO.StreamReader]::new($settingsEntries[0].Open())
+        try { $packagedSettings = $reader.ReadToEnd() | ConvertFrom-Json }
+        finally { $reader.Dispose() }
+        $packagedThumbprint = ($packagedSettings.Update.ExpectedPublisherThumbprint -replace '[^0-9A-Fa-f]','').ToUpperInvariant()
+        if ($packagedThumbprint -ne $SigningThumbprint -or $packagedSettings.Update.ExpectedPublisherSubject -ne $CertSubjectName) {
+            throw 'nupkg 内の発行者信頼設定がリリース用証明書と一致しません'
         }
     } finally { $zip.Dispose() }
 } finally { Remove-Item $verifyDir -Recurse -Force -ErrorAction SilentlyContinue }
@@ -251,21 +297,25 @@ while ($true) {
     if (-not $cursor) { break }
 }
 
-# R2 上の nupkg をバージョンごとに分類し、新しい順に $KeepGenerations 世代を保持する。
-$nupkgKeys = $allKeys | Where-Object { $_ -like '*.nupkg' }
-$versionsOnR2 = $nupkgKeys |
-    ForEach-Object { if ($_ -match 'EXLSXS-([0-9]+\.[0-9]+\.[0-9]+)-') { $matches[1] } } |
+# R2 上のバージョン付きファイルを世代ごとに分類し、新しい順に $KeepGenerations 世代を保持する。
+# ⚠️ 旧実装は '*.nupkg' だけを対象にしていたため、バージョン付きの配布物 (zip / deb / rpm /
+#    AppImage 等) が R2 に永久に溜まっていた (Ferry で 351 個 7.2GB = 含有枠 10GB の 72%)。
+#    固定ファイル名 (Setup.exe / Portable.zip / RELEASES* / releases.*.json) は
+#    バージョン文字列を含まないので対象外 = 安全。
+$versionPattern = '(\d+\.\d+\.\d+)'
+$versionedKeys = $allKeys | Where-Object { [regex]::IsMatch($_, $versionPattern) }
+$versionsOnR2 = $versionedKeys |
+    ForEach-Object { [regex]::Match($_, $versionPattern).Groups[1].Value } |
     Select-Object -Unique |
     Sort-Object { [version]$_ } -Descending
 $keepVersions = @{}
 foreach ($v in ($versionsOnR2 | Select-Object -First $KeepGenerations)) { $keepVersions[$v] = $true }
 if ($keepVersions.Count -gt 0) { Write-Host "  保持世代: $($keepVersions.Keys -join ', ')" }
 
-$toDelete = $nupkgKeys | Where-Object {
-    $key = $_
-    if ($keep.ContainsKey($key)) { $false }                                       # 最新 manifest が指すものは必ず保持
-    elseif ($key -match 'EXLSXS-([0-9]+\.[0-9]+\.[0-9]+)-') { -not $keepVersions.ContainsKey($matches[1]) }
-    else { $true }                                                                # バージョン抽出不能なら削除候補
+$toDelete = $versionedKeys | Where-Object {
+    # 最新 manifest が指すものは必ず保持 (消すと自動更新が壊れる)
+    if ($keep.ContainsKey($_)) { $false }
+    else { -not $keepVersions.ContainsKey([regex]::Match($_, $versionPattern).Groups[1].Value) }
 }
 if (-not $toDelete) {
     Write-Host '  ✅ 削除対象なし'

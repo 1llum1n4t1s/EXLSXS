@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
 using Microsoft.Office.Interop.Excel;
@@ -63,7 +64,15 @@ namespace EXLSXS
 
 		private void Application_WorkbookActivate(Microsoft.Office.Interop.Excel.Workbook Wb)
 		{
-			this.AddInRibbon.RefreshStatus(true);
+			// ブック切替中は Excel がビジー状態で COM 呼び出しが失敗しうる。
+			// Deactivate と同様、失敗時は Finish の有効状態を更新しないだけにする。
+			try
+			{
+				this.AddInRibbon.RefreshStatus(true);
+			}
+			catch
+			{
+			}
 		}
 
 		private void Application_WorkbookDeactivate(Microsoft.Office.Interop.Excel.Workbook Wb)
@@ -111,6 +120,7 @@ namespace EXLSXS
 
 			bool restoreScreenUpdating = false;
 			bool previousScreenUpdating = true;
+			List<string> failedWorksheets = new List<string>();
 
 			try
 			{
@@ -128,11 +138,20 @@ namespace EXLSXS
 				int count = worksheets.Count;
 				for (int i = count; i > 0; i--)
 				{
+					string worksheetLabel = $"#{i}";
 					try
 					{
 						object obj = worksheets[i];
 						if (obj is Microsoft.Office.Interop.Excel._Worksheet worksheet)
 						{
+							try
+							{
+								worksheetLabel = worksheet.Name;
+							}
+							catch
+							{
+							}
+
 							// フォント・方眼紙化・表示形式はセルの書式設定なので、保護シートでは
 							// (View/Zoom/選択と異なり) 変更が COM 例外になるためまとめてスキップする。
 							if (!IsWorksheetProtected(worksheet))
@@ -179,8 +198,9 @@ namespace EXLSXS
 							ScrollWindowToTopLeft(activeWindow);
 						}
 					}
-					catch
+					catch (Exception)
 					{
+						failedWorksheets.Add(worksheetLabel);
 					}
 				}
 			}
@@ -212,6 +232,12 @@ namespace EXLSXS
 				catch
 				{
 				}
+			}
+
+			if (failedWorksheets.Count > 0)
+			{
+				throw new InvalidOperationException(
+					$"{failedWorksheets.Count} 枚のシートを仕上げできませんでした。対象: {string.Join(", ", failedWorksheets.ToArray())}");
 			}
 		}
 

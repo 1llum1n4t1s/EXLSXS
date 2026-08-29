@@ -199,24 +199,6 @@ function Invoke-SignTool {
     }
 }
 
-function Get-GitHubRemoteSource {
-    $remoteUrl = git -C $root remote get-url origin 2>$null
-    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($remoteUrl)) {
-        return $null
-    }
-
-    $remoteUrl = $remoteUrl.Trim()
-    if ($remoteUrl -match '^git@github\.com:(?<owner>[^/]+)/(?<repo>.+?)(\.git)?$') {
-        return "https://github.com/$($matches.owner)/$($matches.repo -replace '\.git$', '')"
-    }
-
-    if ($remoteUrl -match '^https://github\.com/(?<owner>[^/]+)/(?<repo>.+?)(\.git)?$') {
-        return "https://github.com/$($matches.owner)/$($matches.repo -replace '\.git$', '')"
-    }
-
-    return $null
-}
-
 function Ensure-VelopackCli {
     $toolsPath = Join-Path $env:USERPROFILE ".dotnet\tools"
     if ((Test-Path -LiteralPath $toolsPath) -and ($env:PATH -notlike "*$toolsPath*")) {
@@ -319,16 +301,10 @@ if ([string]::IsNullOrWhiteSpace($Version)) {
 $Version = Convert-ToPackVersion -RawVersion $Version
 $assemblyVersion = Convert-ToAssemblyVersion -PackVersion $Version
 
-if ([string]::IsNullOrWhiteSpace($UpdateSource) -and -not [string]::IsNullOrWhiteSpace($env:GITHUB_REPOSITORY)) {
-    $UpdateSource = "https://github.com/$env:GITHUB_REPOSITORY"
-    $UpdateSourceKind = "Github"
-}
-elseif ([string]::IsNullOrWhiteSpace($UpdateSource)) {
-    $remoteSource = Get-GitHubRemoteSource
-    if (-not [string]::IsNullOrWhiteSpace($remoteSource)) {
-        $UpdateSource = $remoteSource
-        $UpdateSourceKind = "Github"
-    }
+if ([string]::IsNullOrWhiteSpace($UpdateSource)) {
+    # ホスト側のパッケージ信頼契約と同じ既定値にする。GitHub は配信元として許可されていない。
+    $UpdateSource = "https://exlsxs.kagayoi.com"
+    $UpdateSourceKind = "Simple"
 }
 
 Write-Host "Publishing EXLSXS VSTO and host for Velopack" -ForegroundColor Cyan

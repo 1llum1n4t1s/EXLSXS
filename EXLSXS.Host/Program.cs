@@ -1,3 +1,4 @@
+using System.Runtime.InteropServices;
 using Velopack;
 
 namespace EXLSXS.Host;
@@ -5,13 +6,17 @@ namespace EXLSXS.Host;
 internal static class Program
 {
     private const string UpdateCheckArg = "--update-check";
+    private const string AppUserModelId = "velopack.EXLSXS";
 
     [STAThread]
     private static int Main(string[] args)
     {
         try
         {
+            TrySetCurrentProcessAppUserModelId();
+
             VelopackApp.Build()
+                .SetAutoApplyOnStartup(false)
                 .OnAfterInstallFastCallback(_ => SafeRegister(AddInRegistrationMode.ForceEnabled, allowPrerequisiteInstall: true))
                 .OnAfterUpdateFastCallback(_ => SafeRegister(AddInRegistrationMode.PreserveLoadBehavior))
                 .OnBeforeUninstallFastCallback(_ => InstalledAppMaintenance.Unregister())
@@ -50,6 +55,15 @@ internal static class Program
         }
     }
 
+    private static void TrySetCurrentProcessAppUserModelId()
+    {
+        try { _ = SetCurrentProcessExplicitAppUserModelID(AppUserModelId); }
+        catch { /* シェル連携の失敗だけでホスト処理を止めない */ }
+    }
+
+    [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
+    private static extern int SetCurrentProcessExplicitAppUserModelID(string appId);
+
     private static void SafeRegister(AddInRegistrationMode mode, bool allowPrerequisiteInstall = false)
     {
         try
@@ -58,10 +72,9 @@ internal static class Program
         }
         catch (Exception ex)
         {
-            // インストール/更新の fast callback 内で登録が失敗しても Velopack のインストール状態は壊さない。
-            // 次回ログオン時の --update-check で Register が走り、現在の BaseDirectory の manifest パスで
-            // 自己修復される (vstolocal 絶対パスと Velopack のフォルダ入れ替えの不整合に対する保険)。
-            Logger.LogException($"Add-in registration failed during Velopack callback ({mode}).", ex);
+            // 登録失敗だけで Velopack のインストールや更新処理を止めない。
+            // --update-check では更新を先に届け、更新後 callback で現在の BaseDirectory を再登録できるようにする。
+            Logger.LogException($"Add-in registration failed; processing will continue ({mode}).", ex);
         }
     }
 
@@ -75,7 +88,7 @@ internal static class Program
         try
         {
             Logger.Log("Silent update check started.");
-            InstalledAppMaintenance.Register(AddInRegistrationMode.PreserveLoadBehavior);
+            SafeRegister(AddInRegistrationMode.PreserveLoadBehavior);
 
             var result = UpdateChecker.CheckAndDownloadAsync().GetAwaiter().GetResult();
             if (result.Result == UpdateChecker.UpdateResult.Downloaded && result.Info != null && result.Manager != null)
