@@ -37,7 +37,7 @@ $CertSubjectName = 'Open Source Developer Yuichiro Shinozaki'
 $SigningThumbprint = '6285702C9AF1FCFE3D9FE815B7F7F625508130C0'
 # /n (Subject 名) で選択: 証明書の年次更新で thumbprint が変わっても署名自体は動く
 $SignParams      = "/n `"$CertSubjectName`" /fd SHA256 /td SHA256 /tr http://time.certum.pl"
-$WranglerVersion = '4.92.0'   # サプライチェーン対策でバージョン固定
+$WranglerVersion = '4.127.1'  # サプライチェーン対策でバージョン固定
 
 # 更新パッケージ内で EXLSXS 発行者の Authenticode 署名を要求する必須ファイル。
 # Host.exe/Host.dll/EXLSXS.dll はクライアントの UpdatePackageTrustVerifier が適用前に検証する。

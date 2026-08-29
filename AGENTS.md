@@ -1,6 +1,6 @@
-# CLAUDE.md — EXLSXS
+# AGENTS.md — EXLSXS
 
-This file provides guidance to Claude Code and other coding agents working in this repository.
+This file provides guidance to Codex and other coding agents working in this repository.
 
 Excel 用 VSTO アドイン（リボンから全シートの表示倍率・表示モード・フォント・選択位置を一括整形）を Velopack で配布するプロジェクト。
 
@@ -12,6 +12,7 @@ Excel 用 VSTO アドイン（リボンから全シートの表示倍率・表�
 - `scripts/release-local.ps1` — 署名付きローカルリリース（ビルド → 署名 → 検証 → R2 アップロード）
 - `web/` — ランディングページ + Cloudflare Worker（`exlsxs.kagayoi.com`）
 - `Directory.Build.props` — **バージョンの唯一の定義場所**（`<Version>`、他は全部ここから導出）
+- `DESIGN.md` — 現行システムの構造、責務、データフロー、設計判断の正本
 
 ## 主要コマンド
 
@@ -37,7 +38,7 @@ pnpm dlx wrangler@4 deploy --config web/wrangler.toml
 - **VSTO ランタイム検出は `v4` と `v4R` の両キーを見る**: Office/VS 同梱導入は `v4`、再頒布パッケージは `v4R` に登録される
 - **EmbedInteropTypes=True のため COM イベントは `+=` で購読する**: 文字列ベースの `ComAwareEventInfo` はイベントメタデータが埋め込まれず NullReferenceException になる
 - **バージョンは `Directory.Build.props` の `<Version>` だけを更新する**: csproj の `ApplicationVersion` / `AssemblyVersion` / host の版数はすべて導出
-- **Velopack パッケージは prerelease 固定** (`0.0.1369-g1d5c984`): 安定版への更新は要手動判断（vpk CLI とのバージョン整合を確認してから）
+- **Velopack ライブラリと vpk CLI は同じ安定版に揃える**: ライブラリ版は `EXLSXS.Host/EXLSXS.Host.csproj`、CLI 版は `build/pack-velopack.ps1` の `$vpkVersion` が正本。片方だけ更新せず、同じ batch で更新して pack 動作を確認する
 - **VS2026 で開くには (1) csproj に標準 VSTO デザイナー構成を持たせ、(2) `.slnx` の VSTO プロジェクト行に `Type` 属性を付けない**: VS2026 でも VSTO は正式サポート（公式テンプレートが同梱され、新規テンプレートは正常にロードする）。EXLSXS が読み込めなかった原因は 2 つあり両方を満たす必要がある。
   - **(1) csproj 側**: `<ProjectExtensions>` の `<FlavorProperties GUID="{BAA0C2D2-18E2-41B9-852F-F413020CAA33}">` に `ProjectCreationSetting="1"` 付き `<ProjectProperties>` と `<Host Name="Excel" GeneratedCodeNamespace="EXLSXS"><HostItem ... Blueprint="ThisAddIn.Designer.xml" GeneratedCode="ThisAddIn.Designer.cs" /></Host>` を持たせ、`ThisAddIn.Designer.xml`（Blueprint）と `ThisAddIn.Designer.cs`（生成コード相当: `partial class ThisAddIn` の生成メンバ + `Globals` + `ThisRibbonCollection`）を実体として置く。`ThisAddIn.cs` はユーザーコードのみにする。この `<Host>`/`<HostItem>` 宣言が無いとフレーバー初期化がアサート (`GUID が空です。 パラメーター名:serviceGuid`) で失敗する（MSBuild ビルドは Host 宣言が無くても通るため気付きにくい）。
   - **(2) `.slnx` 側**: VSTO プロジェクト行は `<Project Path="EXLSXS/EXLSXS.csproj" />` と **Type 属性なし** で書く。Type 属性なしだと VS は拡張子で C# 基底型を判定し csproj の `<ProjectTypeGuids>`（`{BAA0C2D2};{FAE04EC0}` の 2 段チェーン）を読んでフレーバーをアグリゲートする。`Type="{BAA0C2D2-...}"` を付けると**外側フレーバー GUID だけ**が指定され基底型が欠けてアグリゲーションが壊れ「読み込みに失敗しました」になる（過去にこの Type 属性を回避策として入れていたが逆効果だった）。
