@@ -29,6 +29,7 @@ Set-StrictMode -Version Latest
 # ---- 定数 ----
 $Bucket          = 'exlsxs-updates'
 $BaseUrl         = 'https://exlsxs.kagayoi.com'
+$DistributionBaseUrls = @($BaseUrl, 'https://exlsxs.nephilim.jp')
 $AccountId       = '10901bfadbf1005164774a7350082985'
 $Channel         = 'win'
 $SecretsPath     = 'C:\Users\IMT\dev\Secret\secrets.json'
@@ -219,48 +220,53 @@ Write-Host "✅ R2 アップロード完了: $uploaded ファイル"
 # 伝播を確定する。バージョン付き nupkg は URL が一意 (旧キャッシュなし) のためパージ不要。
 Write-Host '== Cloudflare キャッシュパージ ==' -ForegroundColor Cyan
 $cfHeaders = @{ Authorization = "Bearer $($env:CLOUDFLARE_API_TOKEN)" }
-$zoneName = ([uri]$BaseUrl).Host -replace '^[^.]+\.', ''   # <sub>.kagayoi.com → kagayoi.com (apex)
-$zoneResp = Invoke-RestMethod -Uri "https://api.cloudflare.com/client/v4/zones?name=$zoneName" -Headers $cfHeaders -TimeoutSec 30
-if (-not $zoneResp.success -or @($zoneResp.result).Count -eq 0) { throw "Cloudflare zone '$zoneName' の取得に失敗しました" }
-$zoneId = $zoneResp.result[0].id
-$purgeUrls = @($files | Where-Object { $_.Name -notlike '*.nupkg' } | ForEach-Object { "$BaseUrl/$($_.Name)" })
-if ($purgeUrls.Count -gt 0) {
-    $purgeBody = "{`"files`":$(ConvertTo-Json -InputObject $purgeUrls -AsArray -Compress)}"
-    $purgeResp = Invoke-RestMethod -Method Post -Uri "https://api.cloudflare.com/client/v4/zones/$zoneId/purge_cache" `
-        -Headers $cfHeaders -ContentType 'application/json' -Body $purgeBody -TimeoutSec 30
-    if (-not $purgeResp.success) { throw "Cloudflare キャッシュパージに失敗しました: $($purgeResp.errors | ConvertTo-Json -Compress)" }
-    Write-Host "  ✅ パージ: $($purgeUrls.Count) URL"
-    $purgeUrls | ForEach-Object { Write-Host "     $_" }
-} else {
-    Write-Host '  パージ対象なし'
+$fixedFiles = @($files | Where-Object { $_.Name -notlike '*.nupkg' })
+foreach ($distributionBaseUrl in $DistributionBaseUrls) {
+    $zoneName = ([uri]$distributionBaseUrl).Host -replace '^[^.]+\.', ''   # <sub>.example.com → example.com (apex)
+    $zoneResp = Invoke-RestMethod -Uri "https://api.cloudflare.com/client/v4/zones?name=$zoneName" -Headers $cfHeaders -TimeoutSec 30
+    if (-not $zoneResp.success -or @($zoneResp.result).Count -eq 0) { throw "Cloudflare zone '$zoneName' の取得に失敗しました" }
+    $zoneId = $zoneResp.result[0].id
+    $purgeUrls = @($fixedFiles | ForEach-Object { "$distributionBaseUrl/$($_.Name)" })
+    if ($purgeUrls.Count -gt 0) {
+        $purgeBody = "{`"files`":$(ConvertTo-Json -InputObject $purgeUrls -AsArray -Compress)}"
+        $purgeResp = Invoke-RestMethod -Method Post -Uri "https://api.cloudflare.com/client/v4/zones/$zoneId/purge_cache" `
+            -Headers $cfHeaders -ContentType 'application/json' -Body $purgeBody -TimeoutSec 30
+        if (-not $purgeResp.success) { throw "Cloudflare キャッシュパージに失敗しました ($zoneName): $($purgeResp.errors | ConvertTo-Json -Compress)" }
+        Write-Host "  ✅ $zoneName をパージ: $($purgeUrls.Count) URL"
+        $purgeUrls | ForEach-Object { Write-Host "     $_" }
+    } else {
+        Write-Host "  $zoneName のパージ対象なし"
+    }
 }
 
 # ---- 4. 配信確認 (manifest 完全一致リトライ) ----
 # 単純な HTTP 200 だと CDN/edge が古い manifest を返している間に cleanup が走り、
 # 旧 manifest を掴んだクライアントが直後に消える nupkg を取りに行く race がある。
-# ローカル manifest と完全一致するまでリトライしてから cleanup へ進む。
+# 新旧両ホストの固定 URL 自体がローカル manifest と完全一致するまでリトライしてから cleanup へ進む。
 Write-Host '== 配信確認 (manifest 伝播待機) ==' -ForegroundColor Cyan
-$url = "$BaseUrl/releases.$Channel.json"
 $localManifest = Get-Content (Join-Path $ReleaseDir "releases.$Channel.json") -Raw |
     ConvertFrom-Json | ConvertTo-Json -Depth 100 -Compress
 $maxAttempts = 18
-$matched = $false
-for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
-    $resp = Invoke-WebRequest -Uri "${url}?_=$([Guid]::NewGuid().ToString('N'))" `
-        -Headers @{ 'Cache-Control' = 'no-cache' } -TimeoutSec 30
-    $raw = $resp.Content
-    if ($raw -is [byte[]]) { $raw = [System.Text.Encoding]::UTF8.GetString($raw) }
-    $remoteManifest = $raw | ConvertFrom-Json | ConvertTo-Json -Depth 100 -Compress
-    if ($localManifest -eq $remoteManifest) {
-        Write-Host "  ✅ $url がローカル manifest と一致 (attempt $attempt)"
-        $matched = $true
-        break
+foreach ($distributionBaseUrl in $DistributionBaseUrls) {
+    $url = "$distributionBaseUrl/releases.$Channel.json"
+    $matched = $false
+    for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
+        # cache-busting や no-cache を付けると固定 URL の stale edge を検証できないため、そのまま取得する。
+        $resp = Invoke-WebRequest -Uri $url -TimeoutSec 30
+        $raw = $resp.Content
+        if ($raw -is [byte[]]) { $raw = [System.Text.Encoding]::UTF8.GetString($raw) }
+        $remoteManifest = $raw | ConvertFrom-Json | ConvertTo-Json -Depth 100 -Compress
+        if ($localManifest -eq $remoteManifest) {
+            Write-Host "  ✅ $url がローカル manifest と一致 (attempt $attempt)"
+            $matched = $true
+            break
+        }
+        Write-Host "  ⚠️ remote manifest がまだ古い (attempt $attempt / $maxAttempts)、5 秒待機..."
+        Start-Sleep -Seconds 5
     }
-    Write-Host "  ⚠️ remote manifest がまだ古い (attempt $attempt / $maxAttempts)、5 秒待機..."
-    Start-Sleep -Seconds 5
-}
-if (-not $matched) {
-    throw "remote manifest が $($maxAttempts * 5) 秒以内にローカルと一致しませんでした。race 回避のため cleanup を中止します: $url"
+    if (-not $matched) {
+        throw "remote manifest が $($maxAttempts * 5) 秒以内にローカルと一致しませんでした。race 回避のため cleanup を中止します: $url"
+    }
 }
 
 # ---- 5. 旧バージョン nupkg のクリーンアップ (世代保持戦略) ----
