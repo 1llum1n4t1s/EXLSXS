@@ -25,14 +25,16 @@ EXLSXSは、Excelブック内の全ワークシートへ表示モード、表示
 2. 実行ボタンが`ThisAddIn.DoFinish`を呼び、現在のリボン設定を処理用の値へ確定する。
 3. アクティブブックのワークシートを走査し、保護されていないシートへフォント、行高・列幅、表示形式を適用する。
 4. 表示中のシートだけをアクティブ化し、表示モード、倍率、A1選択、スクロール位置を更新する。非表示シートはアクティブ化しない。
-5. 最後に一番左の表示シートをアクティブ化し、Excelの`ScreenUpdating`を処理前の状態へ戻す。処理できなかったシートは他のシートを止めずに収集し、対象名をまとめて利用者へ通知する。
+5. 整形中はExcelの`EnableEvents`と`ScreenUpdating`を無効化し、計算モードを手動へ切り替える。終了時は取得・変更できた処理前の値だけを復元し、計算モードはイベントを無効にしたまま戻し、最後の選択・スクロール後にイベントを復元する。
+6. 最後に一番左の表示シートをアクティブ化する。処理できなかったシートは他のシートを止めずに収集し、対象名をまとめて利用者へ通知する。
 
 ### インストールと登録
 
-1. Velopackのinstall callbackは、.NET Framework 4.8.1とVSTO Runtimeを確認し、不足時だけ同梱bootstrapperを信頼検証して実行する。
-2. `VstoRegistration`が32-bit/64-bit Excel用のHKCU add-in keyへ`Manifest`、`FriendlyName`、`Description`、`LoadBehavior`を書き込む。manifestはローカル配置の`.vsto|vstolocal`を参照する。
-3. installまたは明示的な`--register`では`LoadBehavior=3`を強制する。通常起動やupdate callbackでは既存の無効化状態を上書きしない。
-4. `StartupRegistration`がHKCUのWindows Run keyへ`EXLSXS.Host.exe --update-check`を登録する。uninstall callbackは起動時登録とVSTO登録を解除する。
+1. Velopackのafter-install fast callbackは前提installerを待たず、HKCUのWindows RunOnce keyへ`EXLSXS.Host.exe --register`を登録して一度だけ再試行を予約する。
+2. first runまたは明示的な`--register`は、.NET Framework 4.8.1とVSTO Runtimeを確認し、不足時だけ同梱bootstrapperを信頼検証して実行する。VSTO登録まで成功するとRunOnceの再試行を削除し、失敗時は次回ログオンの回復経路として残す。
+3. `VstoRegistration`が32-bit/64-bit Excel用のHKCU add-in keyへ`Manifest`、`FriendlyName`、`Description`、`LoadBehavior`を書き込む。manifestはローカル配置の`.vsto|vstolocal`を参照する。
+4. installまたは明示的な`--register`では`LoadBehavior=3`を強制する。通常起動やupdate callbackでは既存の無効化状態を上書きしない。
+5. `StartupRegistration`がHKCUのWindows Run keyへ`EXLSXS.Host.exe --update-check`を登録する。uninstall callbackは通常の起動時登録、登録再試行、VSTO登録を解除する。
 
 ### サイレント自動更新
 
@@ -47,7 +49,7 @@ EXLSXSは、Excelブック内の全ワークシートへ表示モード、表示
 1. `Directory.Build.props`の`Version`からVSTO、ホスト、Velopack成果物のversionを導出する。
 2. VSTO publish成果物を`.vsto`、deployment manifest、アセンブリ、依存DLLが同じ階層にある形へ整え、ホスト成果物とともにVelopack stagingへ配置する。
 3. `vpk`がinstaller、portable package、release manifestを生成する。VelopackライブラリとCLIは同じ検証済み安定版を使う。
-4. release scriptが署名を再検証してR2へuploadし、URLが固定された成果物のCloudflare cacheをpurgeする。公開manifestがローカル成果物と一致してから旧世代を整理する。
+4. release scriptが署名を再検証してR2へuploadし、新旧両配信ホストでURLが固定された成果物のCloudflare cacheをpurgeする。両ホストの固定URLからcache-bustingや`no-cache`なしで取得した公開manifestがローカル成果物と一致してから旧世代を整理する。
 5. Cloudflare Workerはランディングページだけを処理し、manifest、package、installerなどの配信特性はR2へ委ねる。
 
 ## 状態と外部境界
@@ -58,6 +60,7 @@ EXLSXSは、Excelブック内の全ワークシートへ表示モード、表示
 | リボンの表示モード・倍率 | `HKCU\Software\EXLSXS` |
 | VSTO登録 | HKCUのExcel add-in key（通常viewと`WOW6432Node`） |
 | 起動時更新確認 | HKCUのWindows Run key |
+| インストール後の登録再試行 | HKCUのWindows RunOnce key。次回ログオンで一度だけ実行し、それ以前に登録成功またはuninstallした場合は明示削除 |
 | 更新設定 | 配布物の`appsettings.json`を基底に、`EXLSXS_UPDATE_*`環境変数を優先 |
 | 更新成果物 | R2 bucket `exlsxs-updates`とVelopack release manifest |
 | 公開入口 | `exlsxs.kagayoi.com`。移行期限までは`exlsxs.nephilim.jp`も同じWorker routeで維持 |
@@ -67,9 +70,11 @@ EXLSXSは、Excelブック内の全ワークシートへ表示モード、表示
 - VSTO stagingはフラット構成とし、publish時は`MapFileExtensions=false`を明示する。`.vsto`とロード対象DLLの物理位置を分離しない。
 - VSTOのExcel host宣言とdesigner生成物、および`.slnx`のType属性なし構成を維持する。
 - COM eventは埋め込みinterop metadataと互換な`+=`で購読する。
+- 全シート整形で一時変更したExcelのイベント、画面更新、計算モードは、COM操作の成否を問わず変更前の値へbest-effortで戻す。
 - install時だけ前提条件の自動導入と`LoadBehavior`強制を許可し、update・通常起動ではユーザーまたはOfficeが無効化した状態を保持する。
+- after-install fast callbackでは前提installerを待たず、RunOnceに次回ログオンで一度だけ実行する登録再試行を予約する。first runで先に登録できた場合またはuninstall時は予約を削除する。
 - 更新パッケージはpublisher trust設定と必須3ファイルの署名検証を通過するまで適用しない。発行元照合には`WinVerifyTrust`の検証済みprovider stateから得た署名者だけを使う。
-- リリースの固定名ファイルを更新した後はCloudflare cacheをpurgeし、公開manifestとの一致を確認する。
+- リリースの固定名ファイルを更新した後は新旧両配信ホストの対象URLをCloudflare cacheからpurgeし、両方の固定URLにある公開manifestとの一致を確認するまで旧世代を整理しない。
 - 旧`nephilim.jp`の更新配信経路は2027-05-31まで維持し、配信ファイルをroot redirectへ巻き込まない。
 
 ## 採用済みの設計判断
@@ -77,6 +82,7 @@ EXLSXSは、Excelブック内の全ワークシートへ表示モード、表示
 - **VSTO本体とVelopackホストの分離**: Excel統合は.NET Framework/VSTOへ残し、installer・更新・署名検証は.NET 10ホストへ集約する。実行環境は二重になるが、VSTO互換性と現行の配布機能を両立できる。
 - **ユーザー単位の登録**: 設定、VSTO登録、起動時更新をHKCUへ置く。端末全体への管理者権限を不要にする代わりに、Windows userごとに登録状態を持つ。
 - **シート単位のbest-effort処理**: COM例外や保護・非表示状態でブック全体を中断せず、適用可能なシートを処理する。部分適用になり得るため、保護シートでは書式変更を明示的に避ける。
+- **登録処理とVelopack fast callbackの分離**: after-install callbackはRunOnceの回復経路だけを短時間で登録し、前提条件導入とVSTO登録はfirst runまたは`--register`へ委ねる。インストール完了を長時間ブロックせず、first runが起動しない場合や再起動が必要な場合にも登録を再試行できる。
 - **署名検証と署名者特定の一体化**: Authenticodeの信頼判定と発行元証明書の取得に同じ`WinVerifyTrust` stateを使う。Windowsの信頼chainへ委譲しつつ、検証対象と無関係な埋め込み証明書を発行元として採用しない。
 - **Worker routeとR2 custom domainの重ね合わせ**: 同じhostで案内ページと更新配信を提供し、非root pathはR2へ透過委譲する。構成は簡潔になる一方、Workerは更新ファイルのRange、cache、Content-Typeを変更しないことが前提となる。
 - **versionと配布toolの固定**: 製品versionを一箇所へ集約し、WranglerとVelopack CLIは検証済みversionへ固定する。自動追随より再現可能な署名・配布を優先する。
