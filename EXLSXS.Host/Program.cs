@@ -15,12 +15,25 @@ internal static class Program
         {
             TrySetCurrentProcessAppUserModelId();
 
+            var handledFirstRun = false;
             VelopackApp.Build()
                 .SetAutoApplyOnStartup(false)
-                .OnAfterInstallFastCallback(_ => SafeRegister(AddInRegistrationMode.ForceEnabled, allowPrerequisiteInstall: true))
+                // FastCallback は短時間で戻る必要があるため、前提インストーラーをここでは待たない。
+                // first run が起動しない／再起動が必要な場合に備えて、先に一度だけ再登録を予約する。
+                .OnAfterInstallFastCallback(_ => SafeScheduleRegistrationRetry())
+                .OnFirstRun(_ =>
+                {
+                    handledFirstRun = true;
+                    SafeRegister(AddInRegistrationMode.ForceEnabled, allowPrerequisiteInstall: true);
+                })
                 .OnAfterUpdateFastCallback(_ => SafeRegister(AddInRegistrationMode.PreserveLoadBehavior))
                 .OnBeforeUninstallFastCallback(_ => InstalledAppMaintenance.Unregister())
                 .Run();
+
+            if (handledFirstRun)
+            {
+                return 0;
+            }
 
             if (HasArg(args, UpdateCheckArg))
             {
@@ -64,6 +77,19 @@ internal static class Program
     [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
     private static extern int SetCurrentProcessExplicitAppUserModelID(string appId);
 
+    private static void SafeScheduleRegistrationRetry()
+    {
+        try
+        {
+            StartupRegistration.RegisterRegistrationRetry();
+        }
+        catch (Exception ex)
+        {
+            // 回復経路の登録失敗だけで Velopack のインストール自体を止めない。
+            Logger.LogException("Registration retry could not be scheduled; installation will continue.", ex);
+        }
+    }
+
     private static void SafeRegister(AddInRegistrationMode mode, bool allowPrerequisiteInstall = false)
     {
         try
@@ -72,8 +98,8 @@ internal static class Program
         }
         catch (Exception ex)
         {
-            // 登録失敗だけで Velopack のインストールや更新処理を止めない。
-            // --update-check では更新を先に届け、更新後 callback で現在の BaseDirectory を再登録できるようにする。
+            // first run の失敗時は OnAfterInstallFastCallback が登録した RunOnce を残す。
+            // update callback では更新を先に届け、次回起動で現在の BaseDirectory を再登録できるようにする。
             Logger.LogException($"Add-in registration failed; processing will continue ({mode}).", ex);
         }
     }

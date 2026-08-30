@@ -7,6 +7,7 @@ internal static class InstalledAppMaintenance
         PrerequisiteChecker.EnsureReady(allowPrerequisiteInstall);
         VstoRegistration.Register(mode);
         StartupRegistration.Register();
+        StartupRegistration.UnregisterRegistrationRetry();
     }
 
     public static void Unregister()
