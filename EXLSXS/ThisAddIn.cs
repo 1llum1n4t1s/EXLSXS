@@ -120,13 +120,37 @@ namespace EXLSXS
 
 			bool restoreScreenUpdating = false;
 			bool previousScreenUpdating = true;
+			bool restoreEnableEvents = false;
+			bool previousEnableEvents = true;
+			bool restoreCalculation = false;
+			XlCalculation previousCalculation = XlCalculation.xlCalculationAutomatic;
 			List<string> failedWorksheets = new List<string>();
+
+			try
+			{
+				previousEnableEvents = application.EnableEvents;
+				application.EnableEvents = false;
+				restoreEnableEvents = true;
+			}
+			catch
+			{
+			}
 
 			try
 			{
 				previousScreenUpdating = application.ScreenUpdating;
 				application.ScreenUpdating = false;
 				restoreScreenUpdating = true;
+			}
+			catch
+			{
+			}
+
+			try
+			{
+				previousCalculation = application.Calculation;
+				application.Calculation = XlCalculation.xlCalculationManual;
+				restoreCalculation = true;
 			}
 			catch
 			{
@@ -209,6 +233,18 @@ namespace EXLSXS
 				// 仕上げ完了後は一番左 (先頭) の表示シートをアクティブにする。
 				ActivateLeftmostVisibleWorksheet(workbook);
 
+				// 自動計算へ戻すと計算イベントが発生しうるため、EnableEvents=false の間に復元する。
+				if (restoreCalculation)
+				{
+					try
+					{
+						application.Calculation = previousCalculation;
+					}
+					catch
+					{
+					}
+				}
+
 				if (restoreScreenUpdating)
 				{
 					try
@@ -231,6 +267,18 @@ namespace EXLSXS
 				}
 				catch
 				{
+				}
+
+				// 最後のシート切替・選択・スクロールまで終えてから、元のイベント状態へ戻す。
+				if (restoreEnableEvents)
+				{
+					try
+					{
+						application.EnableEvents = previousEnableEvents;
+					}
+					catch
+					{
+					}
 				}
 			}
 
