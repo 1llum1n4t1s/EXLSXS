@@ -14,7 +14,7 @@ EXLSXSは、Excelブック内の全ワークシートへ表示モード、表示
 | `EXLSXS.Host/` | .NET 10 Windows | Velopackのinstall/update/uninstall callback、前提条件確認、VSTO登録、Windows起動時登録、自動更新、更新パッケージの署名検証を担う。Excelのシート操作は行わない |
 | `build/pack-velopack.ps1` | PowerShell | VSTO publish、ホストpublish、フラットなstaging構築、署名、`vpk pack`を一つのパッケージング処理へまとめる |
 | `scripts/release-local.ps1` | PowerShell | リリース前検査、署名付きpack、署名検証、R2 upload、Cloudflare cache purge、公開manifest確認、旧世代ファイルの整理を直列実行する |
-| `web/` | Cloudflare Worker + R2 custom domain | `/`と`/index.html`ではランディングページを返し、それ以外の更新ファイル要求は加工せずR2へ委譲する |
+| `../vps-web/lp/exlsxs/` | Cloudflare Worker + R2 custom domain | `/`と`/index.html`ではランディングページを返し、それ以外の更新ファイル要求は加工せずR2へ委譲する |
 | `EXLSXS.Host.Tests/` | .NET 10 / xUnit 4 / Microsoft Testing Platform | 更新元判定、更新設定、署名検証用の正規化規則など、ホストの外部境界に近い規則を検証する |
 
 ## データフロー
@@ -86,3 +86,9 @@ EXLSXSは、Excelブック内の全ワークシートへ表示モード、表示
 - **署名検証と署名者特定の一体化**: Authenticodeの信頼判定と発行元証明書の取得に同じ`WinVerifyTrust` stateを使う。Windowsの信頼chainへ委譲しつつ、検証対象と無関係な埋め込み証明書を発行元として採用しない。
 - **Worker routeとR2 custom domainの重ね合わせ**: 同じhostで案内ページと更新配信を提供し、非root pathはR2へ透過委譲する。構成は簡潔になる一方、Workerは更新ファイルのRange、cache、Content-Typeを変更しないことが前提となる。
 - **versionと配布toolの固定**: 製品versionを一箇所へ集約し、WranglerとVelopack CLIは検証済みversionへ固定する。自動追随より再現可能な署名・配布を優先する。
+
+## 製品ページの配信先
+
+製品ページの配信HTMLは `../vps-web/lp/exlsxs/`（編集元は `../vps-web/tools/lp/templates/`）、公開実体はVPSの `/srv/www/lp/exlsxs/`。
+Cloudflare側の中継設定は `../vps-web/deploy/lp-gateways/exlsxs/` に置く。
+公開URLと既存のR2・ライセンス通信を維持し、配信は `vps-web/deploy/deploy-lp.ps1` へ統一する。

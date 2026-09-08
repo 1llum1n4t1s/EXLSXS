@@ -10,7 +10,7 @@ Excel 用 VSTO アドイン（リボンから全シートの表示倍率・表�
 - `EXLSXS.Host/` — Velopack ホスト (.NET 10)。インストール/更新時の VSTO 登録・起動時サイレント更新
 - `build/pack-velopack.ps1` — VSTO publish → host publish → Velopack pack（staging はフラット構成必須、下記参照）
 - `scripts/release-local.ps1` — 署名付きローカルリリース（ビルド → 署名 → 検証 → R2 アップロード）
-- `web/` — ランディングページ + Cloudflare Worker（`exlsxs.kagayoi.com`）
+- `../vps-web/lp/exlsxs/` — VPS配信のランディングページ（`exlsxs.kagayoi.com`）
 - `Directory.Build.props` — **バージョンの唯一の定義場所**（`<Version>`、他は全部ここから導出）
 - `DESIGN.md` — 現行システムの構造、責務、データフロー、設計判断の正本
 
@@ -31,7 +31,7 @@ pwsh -NoProfile -File scripts/release-local.ps1 -SkipUpload
 pwsh -NoProfile -File scripts/release-local.ps1
 
 # ランディングページのデプロイ（リポジトリルートから実行・--config でファイル明示が必須）
-pnpm dlx wrangler@4 deploy --config web/wrangler.toml
+pwsh ../vps-web/deploy/deploy-lp.ps1
 ```
 
 ## 守ること（実機で踏んだ罠）
@@ -47,7 +47,7 @@ pnpm dlx wrangler@4 deploy --config web/wrangler.toml
   - **(2) `.slnx` 側**: VSTO プロジェクト行は `<Project Path="EXLSXS/EXLSXS.csproj" />` と **Type 属性なし** で書く。Type 属性なしだと VS は拡張子で C# 基底型を判定し csproj の `<ProjectTypeGuids>`（`{BAA0C2D2};{FAE04EC0}` の 2 段チェーン）を読んでフレーバーをアグリゲートする。`Type="{BAA0C2D2-...}"` を付けると**外側フレーバー GUID だけ**が指定され基底型が欠けてアグリゲーションが壊れ「読み込みに失敗しました」になる（過去にこの Type 属性を回避策として入れていたが逆効果だった）。
   - 検証: `EXLSXS.csproj` を直接開く / `.slnx`（Type 無し）を開く のどちらでも `ソリューション 'EXLSXS' (3/3 のプロジェクト)` で EXLSXS が Excel ホストノード付きでロードされること。SDK のホスト/テストは Type 属性不要。
 - **リボン/コードを変えたら `%LOCALAPPDATA%\assembly\dl3` を消してから Excel を起動して動作確認する**: EXLSXS は strong-name 付きで、同じ `<Version>` から生成した `$(Version).0` のビルドは同じアセンブリ identity を持つ。VSTO/Fusion は**同一バージョンの新ビルドを「同じ物」とみなして `dl3` の旧コピーを読み続ける**ため、bin\Debug/Release を再ビルドしても Excel に反映されない。dev 反復での確認手順は「Excel 終了 → `rm -rf %LOCALAPPDATA%/assembly/dl3` → Excel 起動」。Debug と Release は identity が同一なので Fusion がどちらのコピーを使うか不定 → 確実を期すなら両構成を再ビルドしてからキャッシュを消す。リリース時は `/vava` でバージョンが上がり identity が変わるため、この罠はエンドユーザーには出ない（dev 専用）
-- **ランディングページのデプロイは `pnpm dlx wrangler@4 deploy --config web/wrangler.toml` をリポジトリルートから実行する**: `pnpm -C web dlx wrangler@4 deploy` は `-C` が効かず CWD がリポジトリルートのまま wrangler が起動し、`web/wrangler.toml` を読まずに「assets 配信 Worker」を `my-worker` 名で `*.workers.dev` に誤デプロイする（同時にルートへ `wrangler.jsonc` / `.wrangler/` を生成し `.gitignore` を書き換える）。`--config web/wrangler.toml` でファイルを明示すると設定ディレクトリ基準で動き、`exlsxs-landing` を `exlsxs.kagayoi.com/*` route に正しく載せられる。本番前に `--dry-run` で `Total Upload` が ~64 KiB（`index.html` が Text モジュールでバンドルされた証拠）になることを確認する（0.4 KiB なら誤った assets モードに落ちている）。`git push` は GitHub を更新するだけで本番サイトは変わらないため、`web/index.html` を変えたらこのコマンドで明示デプロイする
+- 製品ページの配信は `vps-web/deploy/deploy-lp.ps1` を使う。公開ホスト・更新ファイルの既存経路を維持する。
 - **Velopack 配信の固定名ファイルはアップロード後に Cloudflare キャッシュをパージする**: `EXLSXS-win-Setup.exe` / `releases.win.json` / `RELEASES` / `EXLSXS-win-Portable.zip` / `assets.win.json` は URL 不変で毎リリース中身が変わるため、R2 へ上げても Cloudflare エッジが旧版を `Cache-Control: max-age=14400`（4 時間）保持し、新規ダウンロード・自動更新が旧バージョンを掴む（症状: 配信 manifest は新版なのにページから DL した Setup.exe が旧版。`CF-Cache-Status: HIT` + 古い `Last-Modified` で判別できる）。`scripts/release-local.ps1` は新旧両ホストの固定名 URL を `purge_cache` API でパージし、`releases.win.json` を cache-busting / `no-cache` なしで取得してローカル manifest との一致を確認する（バージョン付き nupkg は URL が一意なのでパージ不要）。ただし公開 Setup.exe の実体一致までは自動確認しないため、フルリリース後は両ホストの固定 URL から Setup.exe を取得し、ローカル成果物とのサイズ・SHA-256 一致と Authenticode `Valid` を確認する。不一致なら対象 URL を再パージして再確認する。手動アップロード時も同じ検証を行う
 
 ## ドメイン移行（2026-07 開始・期限 2027/05/31）
@@ -58,3 +58,9 @@ pnpm dlx wrangler@4 deploy --config web/wrangler.toml
 - 旧ホストの Worker route / custom domain は**期限まで消さない**。消すと出荷済みアプリの自動更新が止まる。
 - `nephilim.jp` の Redirect Rules は `/` だけを 301 する。`releases.*.json` / `*.nupkg` / `*-Setup.exe` は転送せず R2 が配信を続ける。
 - 配信は `exlsxs.kagayoi.com`（R2 `exlsxs-updates`）。旧 `exlsxs.nephilim.jp` は route に併記して残してある。
+
+## 製品ページの配信先
+
+製品ページの配信HTMLは `../vps-web/lp/exlsxs/`（編集元は `../vps-web/tools/lp/templates/`）、公開実体はVPSの `/srv/www/lp/exlsxs/`。
+Cloudflare側の中継設定は `../vps-web/deploy/lp-gateways/exlsxs/` に置く。
+公開URLと既存のR2・ライセンス通信を維持し、配信は `vps-web/deploy/deploy-lp.ps1` へ統一する。
