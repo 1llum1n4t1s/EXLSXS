@@ -209,7 +209,7 @@ function Ensure-VelopackCli {
     # 無固定取得は署名・パッケージングを担う最特権ツールが NuGet 侵害や予期せぬ最新版で
     # 差し替わるサプライチェーン穴になる。更新時はライブラリとこの値を同じ batch で上げ、
     # pack→配信→クライアント更新まで検証してから確定する。
-    $vpkVersion = "1.2.0"
+    $vpkVersion = "1.2.161"
 
     $installedVersion = $null
     $command = Get-Command vpk -ErrorAction SilentlyContinue

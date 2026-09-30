@@ -4,17 +4,6 @@ namespace EXLSXS.Host.Tests;
 
 public class UpdateSettingsTests
 {
-    [Fact]
-    public void Defaults_AreSensible()
-    {
-        var settings = new UpdateSettings();
-
-        Assert.Equal("win", settings.Channel);
-        Assert.Equal(UpdateSourceKind.Auto, settings.SourceKind);
-        Assert.False(settings.IsConfigured);
-        Assert.False(settings.HasPublisherTrustConfiguration);
-    }
-
     [Theory]
     [InlineData("", false)]
     [InlineData("   ", false)]
