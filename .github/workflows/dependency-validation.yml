@@ -43,10 +43,12 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Build VSTO add-in with Office developer tools
         run: |
+          # 配布用の秘密鍵を使わず、CI内だけの短命証明書でVSTOのmanifest生成と署名を検証する。
+          $certificate = New-SelfSignedCertificate -Type CodeSigningCert -Subject "CN=EXLSXS Dependency Validation" -CertStoreLocation Cert:\CurrentUser\My -HashAlgorithm SHA256 -NotAfter (Get-Date).AddDays(1)
           $vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio/Installer/vswhere.exe"
           $installation = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.TeamOffice -property installationPath
           if (-not $installation) { throw "Visual Studio Office developer tools are required to validate the VSTO add-in." }
           $msbuild = Join-Path $installation "MSBuild/Current/Bin/MSBuild.exe"
           $vsVersion = (& $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.TeamOffice -property installationVersion).Split(".")[0] + ".0"
-          & $msbuild EXLSXS/EXLSXS.csproj /t:Restore,Build /p:Configuration=Release /p:Platform=AnyCPU /p:VisualStudioVersion=$vsVersion /p:SignManifests=false /p:SignAssembly=false
+          & $msbuild EXLSXS/EXLSXS.csproj /t:Restore,Build /p:Configuration=Release /p:Platform=AnyCPU /p:VisualStudioVersion=$vsVersion /p:SignManifests=true /p:SignAssembly=false "/p:ManifestCertificateThumbprint=$($certificate.Thumbprint)"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
