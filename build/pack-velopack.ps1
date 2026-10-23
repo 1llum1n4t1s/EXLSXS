@@ -51,37 +51,80 @@ param(
     [switch]$RequireVelopackSigning
 )
 
+
+
+
+# 検証済みの作業対象だけを標準APIで削除する。
+function Remove-LocalWorkItem {
+    param([string[]]$LiteralPath, [string]$AllowedRoot, [switch]$IgnoreMissing, [switch]$AllowLeafJunction)
+    if ([string]::IsNullOrWhiteSpace($AllowedRoot) -or -not [IO.Path]::IsPathRooted($AllowedRoot)) { throw 'Cleanup root must be absolute.' }
+    $boundary = [IO.Path]::GetFullPath($AllowedRoot).TrimEnd('\','/') + [IO.Path]::DirectorySeparatorChar
+    foreach ($target in $LiteralPath) {
+        if ([string]::IsNullOrWhiteSpace($target) -or -not [IO.Path]::IsPathRooted($target)) { throw 'Cleanup target must be absolute.' }
+        $resolved = [IO.Path]::GetFullPath($target)
+        if (-not $resolved.StartsWith($boundary, [StringComparison]::OrdinalIgnoreCase)) { throw 'Cleanup target is outside the allowed root.' }
+        $ancestor = $resolved
+        while ($ancestor) {
+            if (Test-Path -LiteralPath $ancestor) {
+                $item = Get-Item -LiteralPath $ancestor -Force -ErrorAction Stop
+                if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -and -not ($AllowLeafJunction -and $ancestor -eq $resolved -and $item.LinkType -eq 'Junction')) { throw 'Cleanup path contains a reparse point.' }
+            }
+            $ancestor = Split-Path $ancestor -Parent
+        }
+        if (-not (Test-Path -LiteralPath $resolved)) { if ($IgnoreMissing) { continue }; throw "Cleanup target is missing: $resolved" }
+        $item = Get-Item -LiteralPath $resolved -Force -ErrorAction Stop
+        $leafLink = [bool]($item.Attributes -band [IO.FileAttributes]::ReparsePoint)
+        if ($item.PSIsContainer -and -not $leafLink) {
+            if (@(Get-ChildItem -LiteralPath $resolved -Recurse -Force -ErrorAction Stop | Where-Object { $_.Attributes -band [IO.FileAttributes]::ReparsePoint }).Count) { throw 'Cleanup directory contains a reparse point.' }
+        }
+        Remove-Item -LiteralPath $resolved -Recurse:($item.PSIsContainer -and -not $leafLink) -Force -ErrorAction Stop
+        if (Test-Path -LiteralPath $resolved) { throw "Cleanup target remains: $resolved" }
+    }
+}
+
 $ErrorActionPreference = "Stop"
 
 $root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $vstoProject = Join-Path $root "EXLSXS\EXLSXS.csproj"
 $hostProject = Join-Path $root "EXLSXS.Host\EXLSXS.Host.csproj"
-$artifactsDir = Join-Path $root "artifacts"
-$vstoPublishDir = Join-Path $artifactsDir "vsto-publish"
-$hostPublishDir = Join-Path $artifactsDir "host-publish"
-$stagingDir = Join-Path $artifactsDir "velopack-staging"
-$releaseDir = Join-Path $artifactsDir "velopack-releases"
+# 中間出力は実行ごとの外部Temp、配布物は従来の正式保存先に置く。
+$taskId = [Guid]::NewGuid().ToString('N')
+$scratchParent = [IO.Path]::GetFullPath((Join-Path ([IO.Path]::GetTempPath()) 'Codex\EXLSXS'))
+$artifactsDir = Join-Path $scratchParent $taskId
+$vstoPublishDir = Join-Path $artifactsDir 'vsto-publish'
+$hostPublishDir = Join-Path $artifactsDir 'host-publish'
+$stagingDir = Join-Path $artifactsDir 'velopack-staging'
+$vstoBuildDir = Join-Path $artifactsDir 'vsto-build'
+$vstoObjDir = Join-Path $artifactsDir 'vsto-obj'
+$releaseDir = Join-Path $root 'artifacts\velopack-releases'
 
-function Assert-InWorkspace {
+function Assert-NoReparseAncestor {
     param([Parameter(Mandatory = $true)][string]$Path)
-
-    $fullPath = [System.IO.Path]::GetFullPath($Path)
-    $fullRoot = [System.IO.Path]::GetFullPath($root)
-    if (-not $fullPath.StartsWith($fullRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
-        throw "Refusing to modify a path outside the workspace: $fullPath"
+    $ancestor = [IO.Path]::GetFullPath($Path)
+    while ($ancestor) {
+        if (Test-Path -LiteralPath $ancestor) {
+            $item = Get-Item -LiteralPath $ancestor -Force -ErrorAction Stop
+            if (-not $item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+                throw "Output path has a non-directory or reparse ancestor: $ancestor"
+            }
+        }
+        $ancestor = Split-Path -Parent $ancestor
     }
 }
 
-function Reset-Directory {
+function Assert-ExternalOutputRoot {
     param([Parameter(Mandatory = $true)][string]$Path)
-
-    Assert-InWorkspace -Path $Path
-    if (Test-Path -LiteralPath $Path) {
-        Remove-Item -LiteralPath $Path -Recurse -Force
+    $absolute = [IO.Path]::GetFullPath($Path).TrimEnd([char[]]'\/')
+    $forbiddenRoots = @($root, (Join-Path ([Environment]::GetFolderPath('UserProfile')) '.codex'))
+    if (-not [string]::IsNullOrWhiteSpace($env:CODEX_HOME)) { $forbiddenRoots += [IO.Path]::GetFullPath($env:CODEX_HOME) }
+    foreach ($forbiddenRoot in $forbiddenRoots) {
+        $forbidden = [IO.Path]::GetFullPath($forbiddenRoot).TrimEnd([char[]]'\/')
+        if ($absolute.Equals($forbidden, [StringComparison]::OrdinalIgnoreCase) -or $absolute.StartsWith($forbidden + '\', [StringComparison]::OrdinalIgnoreCase)) {
+            throw "Intermediate output and cleanup ledger must be outside the repository and Codex user directory: $absolute"
+        }
     }
-    New-Item -ItemType Directory -Path $Path -Force | Out-Null
+    Assert-NoReparseAncestor -Path $absolute
 }
-
 function Get-ProjectValue {
     param(
         [Parameter(Mandatory = $true)][string]$Path,
@@ -288,6 +331,16 @@ function Assert-CertificateInCurrentUserStore {
     return $normalized
 }
 
+$scratchCreated = $false
+$packFailure = $null
+$cleanupFailure = $null
+try {
+    Assert-ExternalOutputRoot -Path $artifactsDir
+    Assert-NoReparseAncestor -Path $releaseDir
+    if (Test-Path -LiteralPath $artifactsDir) { throw "Intermediate output already exists: $artifactsDir" }
+    New-Item -ItemType Directory -Path $artifactsDir -ErrorAction Stop | Out-Null
+    $scratchCreated = $true
+    Write-Host "  Intermediate output: $artifactsDir"
 if ([string]::IsNullOrWhiteSpace($Version)) {
     # バージョンの単一ソースはリポジトリ直下の Directory.Build.props の <Version>。
     $directoryBuildProps = Join-Path $root "Directory.Build.props"
@@ -313,7 +366,7 @@ Write-Host "  Channel: $Channel"
 Write-Host "  RuntimeIdentifier: $RuntimeIdentifier"
 Write-Host "  UpdateSource: $UpdateSource"
 
-Reset-Directory -Path $artifactsDir
+# 実行専用の空のTempを使用するため、既存artifactsは削除しない。
 $VstoSigningPfxPath = Get-ValueOrEnvironment -Value $VstoSigningPfxPath -EnvironmentName "EXLSXS_VSTO_SIGNING_PFX_PATH"
 # PFX パスワードはパラメータ未指定時のみ環境変数 (CI secret マスク前提) から読み、即 SecureString 化する。
 if ($null -eq $VstoSigningPfxPassword) {
@@ -361,9 +414,7 @@ if ($RequireVelopackSigning -and [string]::IsNullOrWhiteSpace($VelopackSignParam
 
 # publish 成果物は毎回クリーンに作り直す。前回の .deploy 等の残骸が残ると、
 # 増分 publish で混ざってマニフェスト記載の論理名と物理ファイル名がずれる原因になる。
-if (Test-Path $vstoPublishDir) {
-    Remove-Item -Path $vstoPublishDir -Recurse -Force
-}
+
 New-Item -ItemType Directory -Path $vstoPublishDir -Force | Out-Null
 
 $msbuild = Get-MSBuildPath
@@ -375,6 +426,9 @@ $buildArgs = @(
     "/t:Restore,Rebuild",
     "/p:Configuration=$Configuration",
     "/p:Platform=AnyCPU",
+    "/p:OutputPath=$vstoBuildDir\",
+    "/p:BaseIntermediateOutputPath=$vstoObjDir\",
+    "/p:MSBuildProjectExtensionsPath=$vstoObjDir\",
     "/p:ManifestCertificateThumbprint=$VstoSigningThumbprint"
 )
 & $msbuild @buildArgs
@@ -387,7 +441,7 @@ if ($LASTEXITCODE -ne 0) {
 #    更新パッケージ内の EXLSXS.dll(.deploy) が未署名になりクライアントの信頼検証が失敗する。
 #    署名済み DLL から .deploy と ClickOnce application manifest が生成されるので、
 #    Authenticode 署名と manifest ハッシュの両方が整合する。
-$vstoAssembly = Join-Path (Split-Path -Parent $vstoProject) "bin\$Configuration\EXLSXS.dll"
+$vstoAssembly = Join-Path $vstoBuildDir 'EXLSXS.dll'
 if (-not [string]::IsNullOrWhiteSpace($VelopackSignParams)) {
     if (-not (Test-Path -LiteralPath $vstoAssembly)) {
         throw "VSTO assembly was not found for signing: $vstoAssembly"
@@ -404,6 +458,9 @@ $publishArgs = @(
     "/p:Platform=AnyCPU",
     "/p:PublishDir=$vstoPublishDirWithSlash",
     "/p:PublishUrl=$vstoPublishDirWithSlash",
+    "/p:OutputPath=$vstoBuildDir\",
+    "/p:BaseIntermediateOutputPath=$vstoObjDir\",
+    "/p:MSBuildProjectExtensionsPath=$vstoObjDir\",
     # vstolocal でその場ロードするため .deploy 拡張子を付けない。csproj の PropertyGroup 値は
     # VSTO の publish ターゲットに上書きされるので、ターゲットから変更不可なグローバルプロパティ
     # (コマンドライン /p:) として渡す必要がある。これが無いと EXLSXS.dll.deploy が出力され、
@@ -416,9 +473,10 @@ if ($LASTEXITCODE -ne 0) {
     throw "VSTO publish failed with exit code $LASTEXITCODE"
 }
 
-Reset-Directory -Path $hostPublishDir
+New-Item -ItemType Directory -Path $hostPublishDir -ErrorAction Stop | Out-Null
 $selfContained = if ($FrameworkDependent) { "false" } else { "true" }
 dotnet publish $hostProject `
+    --artifacts-path (Join-Path $artifactsDir 'host-build') `
     -c $Configuration `
     -r $RuntimeIdentifier `
     --self-contained $selfContained `
@@ -431,7 +489,7 @@ if ($LASTEXITCODE -ne 0) {
     throw "Host publish failed with exit code $LASTEXITCODE"
 }
 
-Reset-Directory -Path $stagingDir
+New-Item -ItemType Directory -Path $stagingDir -ErrorAction Stop | Out-Null
 Copy-Item -Path (Join-Path $hostPublishDir "*") -Destination $stagingDir -Recurse -Force
 
 $vstoStagingDir = Join-Path $stagingDir "vsto"
@@ -485,7 +543,8 @@ $settingsJson = $settings | ConvertTo-Json -Depth 5
 [System.IO.File]::WriteAllText((Join-Path $stagingDir "appsettings.json"), $settingsJson, [System.Text.Encoding]::UTF8)
 
 Ensure-VelopackCli
-Reset-Directory -Path $releaseDir
+# 既存の正式配布物は保持し、vpkに同じ正式出力先を渡す。
+New-Item -ItemType Directory -Path $releaseDir -Force | Out-Null
 
 # Setup.exe / Update.exe に付けるアイコン。Host 本体は csproj の ApplicationIcon で
 # 同じ app.ico を持つが、Velopack の Setup.exe には vpk pack の --icon を渡さないと付かない。
@@ -522,6 +581,25 @@ if ($LASTEXITCODE -ne 0) {
     throw "vpk pack failed with exit code $LASTEXITCODE"
 }
 
+}
+catch {
+    $packFailure = $_
+}
+finally {
+    if ($scratchCreated -and (Test-Path -LiteralPath $artifactsDir)) {
+        try {
+            Remove-LocalWorkItem -LiteralPath $artifactsDir -AllowedRoot $scratchParent
+        }
+        catch {
+            $cleanupFailure = $_
+        }
+    }
+}
+if ($null -ne $cleanupFailure) {
+    $packMessage = if ($null -ne $packFailure) { " Packaging also failed: $($packFailure.Exception.Message)" } else { '' }
+    throw "Intermediate cleanup failed; inspect the retained source. Source: $artifactsDir; Reason: $($cleanupFailure.Exception.Message).$packMessage"
+}
+if ($null -ne $packFailure) { throw $packFailure }
 Write-Host "Velopack artifacts created:" -ForegroundColor Green
 Get-ChildItem -LiteralPath $releaseDir | ForEach-Object {
     Write-Host "  $($_.FullName)"

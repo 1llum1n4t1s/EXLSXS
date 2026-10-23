@@ -12,7 +12,7 @@
 # 前提:
 #   - SimplySign Desktop が接続済み (証明書が CurrentUser\My に見えていること)
 #   - Directory.Build.props の <Version> がリリースしたいバージョンであること (/vava 済み)
-#   - C:\Users\IMT\dev\Secret\secrets.json に cloudflare.api_token があること
+#   - D:\Dev\Secret\secrets.json に cloudflare.api_token があること
 #
 # 使い方:
 #   pwsh scripts/release-local.ps1                # フルリリース (build + sign + upload + cleanup)
@@ -23,6 +23,37 @@ param(
     [switch]$SkipUpload
 )
 
+
+
+
+# 検証済みの作業対象だけを標準APIで削除する。
+function Remove-LocalWorkItem {
+    param([string[]]$LiteralPath, [string]$AllowedRoot, [switch]$IgnoreMissing, [switch]$AllowLeafJunction)
+    if ([string]::IsNullOrWhiteSpace($AllowedRoot) -or -not [IO.Path]::IsPathRooted($AllowedRoot)) { throw 'Cleanup root must be absolute.' }
+    $boundary = [IO.Path]::GetFullPath($AllowedRoot).TrimEnd('\','/') + [IO.Path]::DirectorySeparatorChar
+    foreach ($target in $LiteralPath) {
+        if ([string]::IsNullOrWhiteSpace($target) -or -not [IO.Path]::IsPathRooted($target)) { throw 'Cleanup target must be absolute.' }
+        $resolved = [IO.Path]::GetFullPath($target)
+        if (-not $resolved.StartsWith($boundary, [StringComparison]::OrdinalIgnoreCase)) { throw 'Cleanup target is outside the allowed root.' }
+        $ancestor = $resolved
+        while ($ancestor) {
+            if (Test-Path -LiteralPath $ancestor) {
+                $item = Get-Item -LiteralPath $ancestor -Force -ErrorAction Stop
+                if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -and -not ($AllowLeafJunction -and $ancestor -eq $resolved -and $item.LinkType -eq 'Junction')) { throw 'Cleanup path contains a reparse point.' }
+            }
+            $ancestor = Split-Path $ancestor -Parent
+        }
+        if (-not (Test-Path -LiteralPath $resolved)) { if ($IgnoreMissing) { continue }; throw "Cleanup target is missing: $resolved" }
+        $item = Get-Item -LiteralPath $resolved -Force -ErrorAction Stop
+        $leafLink = [bool]($item.Attributes -band [IO.FileAttributes]::ReparsePoint)
+        if ($item.PSIsContainer -and -not $leafLink) {
+            if (@(Get-ChildItem -LiteralPath $resolved -Recurse -Force -ErrorAction Stop | Where-Object { $_.Attributes -band [IO.FileAttributes]::ReparsePoint }).Count) { throw 'Cleanup directory contains a reparse point.' }
+        }
+        Remove-Item -LiteralPath $resolved -Recurse:($item.PSIsContainer -and -not $leafLink) -Force -ErrorAction Stop
+        if (Test-Path -LiteralPath $resolved) { throw "Cleanup target remains: $resolved" }
+    }
+}
+
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
@@ -32,13 +63,13 @@ $BaseUrl         = 'https://exlsxs.kagayoi.com'
 $DistributionBaseUrls = @($BaseUrl, 'https://exlsxs.nephilim.jp')
 $AccountId       = '10901bfadbf1005164774a7350082985'
 $Channel         = 'win'
-$SecretsPath     = 'C:\Users\IMT\dev\Secret\secrets.json'
+$SecretsPath     = 'D:\Dev\Secret\secrets.json'
 $CertSubjectName = 'Open Source Developer Yuichiro Shinozaki'
 # 署名証明書 thumbprint (ClickOnce manifest 署名 + Authenticode 署名者の期待値)
 $SigningThumbprint = '6285702C9AF1FCFE3D9FE815B7F7F625508130C0'
 # /n (Subject 名) で選択: 証明書の年次更新で thumbprint が変わっても署名自体は動く
 $SignParams      = "/n `"$CertSubjectName`" /fd SHA256 /td SHA256 /tr http://time.certum.pl"
-$WranglerVersion = '4.144.0'  # サプライチェーン対策でバージョン固定
+$WranglerVersion = '4.152.0'  # サプライチェーン対策でバージョン固定
 
 # 更新パッケージ内で EXLSXS 発行者の Authenticode 署名を要求する必須ファイル。
 # Host.exe/Host.dll/EXLSXS.dll はクライアントの UpdatePackageTrustVerifier が適用前に検証する。
@@ -128,9 +159,10 @@ foreach ($exe in Get-ChildItem $ReleaseDir -Filter '*.exe') {
 }
 
 Add-Type -AssemblyName System.IO.Compression.FileSystem
-$fullNupkg = Get-ChildItem $ReleaseDir -Filter '*-full.nupkg' | Select-Object -First 1
+$fullNupkg = Get-Item -LiteralPath (Join-Path $ReleaseDir "EXLSXS-$version-full.nupkg") -ErrorAction SilentlyContinue
 if (-not $fullNupkg) { throw "full nupkg が見つかりません: $ReleaseDir" }
-$verifyDir = Join-Path $env:TEMP "exlsxs-relverify-$([Guid]::NewGuid().ToString('N'))"
+$verificationTempRoot = [IO.Path]::GetFullPath($env:TEMP)
+$verifyDir = Join-Path $verificationTempRoot "exlsxs-relverify-$([Guid]::NewGuid().ToString('N'))"
 New-Item -ItemType Directory -Path $verifyDir -Force | Out-Null
 try {
     $zip = [System.IO.Compression.ZipFile]::OpenRead($fullNupkg.FullName)
@@ -141,6 +173,8 @@ try {
         })
         if ($portableEntries.Count -eq 0) { throw 'nupkg 内に PE ファイルが見つかりません' }
 
+        # 必須ファイルも同じ PE エントリーなので、検証済みの署名者をエントリー単位で保持する。
+        $verifiedThumbprints = [System.Collections.Generic.Dictionary[System.IO.Compression.ZipArchiveEntry,string]]::new()
         foreach ($entry in $portableEntries) {
             $dest = Join-Path $verifyDir "$([Guid]::NewGuid().ToString('N'))-$([IO.Path]::GetFileName($entry.FullName) -replace '\.deploy$','')"
             [System.IO.Compression.ZipFileExtensions]::ExtractToFile($entry, $dest, $true)
@@ -157,6 +191,7 @@ try {
             if (-not $isExpectedPublisher -and -not $isMicrosoftPublisher) {
                 throw "nupkg 内 '$($entry.FullName)' の署名者が許可対象外です: $($sig.SignerCertificate.Subject)"
             }
+            $verifiedThumbprints.Add($entry, ($sig.SignerCertificate.Thumbprint -replace '[^0-9A-Fa-f]','').ToUpperInvariant())
         }
 
         foreach ($required in $RequiredSignedEntries) {
@@ -165,13 +200,7 @@ try {
                 @($required.Suffixes | Where-Object { $entryName.EndsWith("/$_") -or $entryName -eq $_ }).Count -gt 0
             } | Select-Object -First 1
             if (-not $entry) { throw "nupkg 内に必須ファイル '$($required.Label)' が見つかりません" }
-            $dest = Join-Path $verifyDir ([IO.Path]::GetFileName($entry.FullName) -replace '\.deploy$','')
-            [System.IO.Compression.ZipFileExtensions]::ExtractToFile($entry, $dest, $true)
-            $sig = Get-AuthenticodeSignature $dest
-            if ($sig.Status -ne 'Valid') {
-                throw "nupkg 内 '$($entry.FullName)' の Authenticode 署名が無効 ($($sig.Status))。クライアントの更新検証が失敗します。"
-            }
-            $thumb = ($sig.SignerCertificate.Thumbprint -replace '[^0-9A-Fa-f]','').ToUpperInvariant()
+            $thumb = $verifiedThumbprints[$entry]
             if ($thumb -ne $SigningThumbprint) {
                 throw "nupkg 内 '$($entry.FullName)' の署名者 thumbprint 不一致。期待 $SigningThumbprint, 実際 $thumb"
             }
@@ -190,7 +219,7 @@ try {
             throw 'nupkg 内の発行者信頼設定がリリース用証明書と一致しません'
         }
     } finally { $zip.Dispose() }
-} finally { Remove-Item $verifyDir -Recurse -Force -ErrorAction SilentlyContinue }
+} finally { Remove-LocalWorkItem -LiteralPath $verifyDir -AllowedRoot $verificationTempRoot -IgnoreMissing }
 
 if ($SkipUpload) {
     Write-Host "`n✅ -SkipUpload 指定のためここで終了。成果物: $ReleaseDir" -ForegroundColor Green
