@@ -605,6 +605,12 @@ $vpkArgs = @(
     "--shortcuts", "None"
 )
 
+# v1.0.11 は公開後に同版の内容が差し替わったため、ベースを一意に決められない。
+# v1.0.12 への更新だけは全量配信にし、どちらの v1.0.11 からも更新できるようにする。
+if ($Version -eq '1.0.12') {
+    $vpkArgs += @('--delta', 'None')
+}
+
 if (-not [string]::IsNullOrWhiteSpace($VelopackSignParams)) {
     $vpkArgs += @("--signParams", $VelopackSignParams)
 }

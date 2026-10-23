@@ -17,10 +17,14 @@
 # 使い方:
 #   pwsh scripts/release-local.ps1                # フルリリース (build + sign + upload + cleanup)
 #   pwsh scripts/release-local.ps1 -SkipUpload    # ビルド + 署名のみ (アップロードしない動作確認用)
+#   pwsh scripts/release-local.ps1 -SkipBuild -ExpectedPackageSha256 <SHA256>
+#                                                # 実機検証済みの同一パッケージを再ビルドせず配信
 
 [CmdletBinding()]
 param(
-    [switch]$SkipUpload
+    [switch]$SkipUpload,
+    [switch]$SkipBuild,
+    [string]$ExpectedPackageSha256
 )
 
 
@@ -130,6 +134,17 @@ if (-not $SkipUpload) {
 # ---- 1. ビルド + 署名付き Velopack パッケージング (pack-velopack.ps1 に委譲) ----
 # 配信元を R2 (SimpleWebSource) に向け、ClickOnce/Authenticode 双方を本証明書で署名する。
 Write-Host '== ビルド + 署名 (pack-velopack.ps1) ==' -ForegroundColor Cyan
+if ($SkipBuild) {
+    if ($ExpectedPackageSha256 -notmatch '^[0-9a-fA-F]{64}$') {
+        throw '-SkipBuild には実機検証済みパッケージの -ExpectedPackageSha256 が必要です。'
+    }
+    $verifiedPackage = Join-Path $ReleaseDir "EXLSXS-$version-full.nupkg"
+    if ((Get-FileHash -LiteralPath $verifiedPackage -Algorithm SHA256).Hash -ne $ExpectedPackageSha256) {
+        throw '実機検証済みパッケージと配信予定パッケージの SHA-256 が一致しません。'
+    }
+    Write-Host '検証済みパッケージを使用し、ビルドと再署名を省略します。'
+}
+else {
 Invoke-Native 'pack-velopack.ps1' {
     pwsh -NoProfile -ExecutionPolicy Bypass -File $PackScript `
         -Channel $Channel `
@@ -140,6 +155,7 @@ Invoke-Native 'pack-velopack.ps1' {
         -ExpectedPublisherThumbprint $SigningThumbprint `
         -ExpectedPublisherSubject $CertSubjectName `
         -RequireVelopackSigning
+}
 }
 
 if (-not (Test-Path $ReleaseDir)) { throw "Velopack 出力が見つかりません: $ReleaseDir" }
