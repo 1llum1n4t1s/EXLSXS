@@ -12,7 +12,7 @@ internal enum LogLevel
 
 internal static class Logger
 {
-    private static readonly object Gate = new();
+    private static readonly Lock Gate = new();
     private static StreamWriter? writer;
     private static bool writerFailed;
 

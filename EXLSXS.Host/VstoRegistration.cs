@@ -73,11 +73,11 @@ internal static class VstoRegistration
     private static string ResolveManifestPath()
     {
         var baseDir = AppContext.BaseDirectory;
-        var candidates = new[]
-        {
+        string[] candidates =
+        [
             Path.Combine(baseDir, "vsto", "EXLSXS.vsto"),
             Path.Combine(baseDir, "EXLSXS.vsto")
-        };
+        ];
 
         return candidates.FirstOrDefault(File.Exists) ?? candidates[0];
     }

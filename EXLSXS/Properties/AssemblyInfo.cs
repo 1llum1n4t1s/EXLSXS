@@ -1,9 +1,5 @@
-using System;
-using System.Diagnostics;
 using System.Reflection;
-using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
-using System.Runtime.Versioning;
 
 // AssemblyVersion / AssemblyFileVersion は Directory.Build.props の <Version> から
 // EXLSXS.csproj の GenerateVersionAttributes ターゲットで生成する (ここには固定値を持たない)。

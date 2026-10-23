@@ -166,61 +166,63 @@ namespace EXLSXS
 					try
 					{
 						object obj = worksheets[i];
-						if (obj is Microsoft.Office.Interop.Excel._Worksheet worksheet)
+						if (!(obj is Microsoft.Office.Interop.Excel._Worksheet worksheet))
 						{
-							try
-							{
-								worksheetLabel = worksheet.Name;
-							}
-							catch
-							{
-							}
-
-							// フォント・方眼紙化・表示形式はセルの書式設定なので、保護シートでは
-							// (View/Zoom/選択と異なり) 変更が COM 例外になるためまとめてスキップする。
-							if (!IsWorksheetProtected(worksheet))
-							{
-								if (adjustFont)
-								{
-									worksheet.Cells.Font.Name = adjustFontName;
-								}
-
-								if (adjustGrid)
-								{
-									worksheet.Cells.RowHeight = gridRowHeightPoints;
-									worksheet.Cells.ColumnWidth = gridColumnWidthChars;
-								}
-
-								if (adjustNumberFormat)
-								{
-									worksheet.Cells.NumberFormat = adjustNumberFormatCode;
-								}
-							}
-
-							// 非表示シートはアクティブ化できないため、表示倍率・選択位置の変更はスキップする。
-							if (!IsWorksheetVisible(worksheet))
-							{
-								continue;
-							}
-
-							worksheet.Activate();
-							Microsoft.Office.Interop.Excel.Window activeWindow = application.ActiveWindow;
-							if (activeWindow != null)
-							{
-								activeWindow.View = adjustView;
-								activeWindow.Zoom = adjustZoom;
-							}
-
-							worksheet.get_Range("A1", Missing.Value).Select();
-
-							// 各表示シートのスクロール位置を左上へ戻す。A1 を選択しても
-							// ウィンドウ枠を固定/分割しているシートはスクロール対象ペインが
-							// 先頭に戻らないため、シートごとに（＝アクティブな今のうちに）明示リセットする。
-							// ここでの設定は ScreenUpdating=false でも各シートの表示状態として保持され、
-							// 後でそのシートに切り替えた際に左上で表示される。最後に見るシートは
-							// finally で画面更新を戻した後に再リセットして確実に反映させる。
-							ScrollWindowToTopLeft(activeWindow);
+							continue;
 						}
+
+						try
+						{
+							worksheetLabel = worksheet.Name;
+						}
+						catch
+						{
+						}
+
+						// フォント・方眼紙化・表示形式はセルの書式設定なので、保護シートでは
+						// (View/Zoom/選択と異なり) 変更が COM 例外になるためまとめてスキップする。
+						if (!IsWorksheetProtected(worksheet))
+						{
+							if (adjustFont)
+							{
+								worksheet.Cells.Font.Name = adjustFontName;
+							}
+
+							if (adjustGrid)
+							{
+								worksheet.Cells.RowHeight = gridRowHeightPoints;
+								worksheet.Cells.ColumnWidth = gridColumnWidthChars;
+							}
+
+							if (adjustNumberFormat)
+							{
+								worksheet.Cells.NumberFormat = adjustNumberFormatCode;
+							}
+						}
+
+						// 非表示シートはアクティブ化できないため、表示倍率・選択位置の変更はスキップする。
+						if (!IsWorksheetVisible(worksheet))
+						{
+							continue;
+						}
+
+						worksheet.Activate();
+						Microsoft.Office.Interop.Excel.Window activeWindow = application.ActiveWindow;
+						if (activeWindow != null)
+						{
+							activeWindow.View = adjustView;
+							activeWindow.Zoom = adjustZoom;
+						}
+
+						worksheet.get_Range("A1", Missing.Value).Select();
+
+						// 各表示シートのスクロール位置を左上へ戻す。A1 を選択しても
+						// ウィンドウ枠を固定/分割しているシートはスクロール対象ペインが
+						// 先頭に戻らないため、シートごとに（＝アクティブな今のうちに）明示リセットする。
+						// ここでの設定は ScreenUpdating=false でも各シートの表示状態として保持され、
+						// 後でそのシートに切り替えた際に左上で表示される。最後に見るシートは
+						// finally で画面更新を戻した後に再リセットして確実に反映させる。
+						ScrollWindowToTopLeft(activeWindow);
 					}
 					catch (Exception)
 					{
