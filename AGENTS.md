@@ -30,6 +30,9 @@ pwsh -NoProfile -File scripts/release-local.ps1 -SkipUpload
 # リリース（署名 + R2 アップロード。SimplySign ログイン必須）
 pwsh -NoProfile -File scripts/release-local.ps1
 
+# 実機検証済み成果物の配信（変数には実機検証時に記録した full.nupkg の SHA-256 を設定）
+pwsh -NoProfile -File scripts/release-local.ps1 -SkipBuild -ExpectedPackageSha256 $verifiedPackageSha256
+
 # ランディングページのデプロイ（リポジトリルートから EXLSXS だけを指定）
 pwsh -NoProfile -File ../vps-web/deploy/deploy-lp.ps1 -Product exlsxs
 ```
@@ -39,6 +42,7 @@ pwsh -NoProfile -File ../vps-web/deploy/deploy-lp.ps1 -Product exlsxs
 - **vsto staging はフラット構成を維持する**: `.vsto` / `.dll.manifest` / `EXLSXS.dll` / 依存 DLL を同一フォルダに並べる。vstolocal 登録は .vsto と同じフォルダを AppBase にするため、ClickOnce のネスト構成 (`Application Files\<name>_<ver>\`) のまま登録すると `Assembly.Load("EXLSXS")` が FileNotFoundException でアドインが読み込めない
 - **publish は `MapFileExtensions=false` をコマンドライン `/p:` で渡す**: csproj の PropertyGroup 値は VSTO publish ターゲットに上書きされる。`.deploy` 拡張子が付くと vstolocal がファイルを見つけられない
 - **署名後に VSTO マニフェストを再生成する**: `build/pack-velopack.ps1` の「Rebuild → DLL の Authenticode 署名 → `/t:ResolveReferences,VisualStudioForApplicationsBuild,PublishOnly`」の順序を維持する。`PublishOnly` 単独へ省略せず、フラットな `.vsto` は同じ `$vstoBuildDir` から取得する。梱包前の版数・identity・ハッシュ・DLL サイズ検証を維持し、配布処理を変更したら署名付き pack（`-SkipUpload`）がこの検証まで通ることを確認する。理由と検証範囲は [DESIGN.md](DESIGN.md#パッケージ作成と公開) を参照。
+- **実機検証済み成果物を配信するときは再ビルドしない**: `-SkipBuild -ExpectedPackageSha256` を使い、`artifacts/velopack-releases/EXLSXS-<Version>-full.nupkg` と実機検証時に記録した SHA-256 を照合する。配信直前に計算した値で検証記録を代用しない。この経路でも署名証明書のプリフライトと成果物の署名検証は必要。
 - **VSTO ランタイム検出は `v4` と `v4R` の両キーを見る**: Office/VS 同梱導入は `v4`、再頒布パッケージは `v4R` に登録される
 - **EmbedInteropTypes=True のため COM イベントは `+=` で購読する**: 文字列ベースの `ComAwareEventInfo` はイベントメタデータが埋め込まれず NullReferenceException になる
 - **バージョンは `Directory.Build.props` の `<Version>` だけを更新する**: csproj の `ApplicationVersion` / `AssemblyVersion` / host の版数はすべて導出

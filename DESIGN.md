@@ -49,7 +49,7 @@ EXLSXSは、Excelブック内の全ワークシートへ表示モード、表示
 1. `Directory.Build.props`の`Version`からVSTO、ホスト、Velopack成果物のversionを導出する。
 2. VSTOをRebuildし、配布用DLLをAuthenticode署名してから、DLLを再ビルドせずにClickOnceマニフェストを再生成してpublishする。`PublishOnly`単独では署名前のDLLのハッシュが残るため、参照解決と`VisualStudioForApplicationsBuild`を先に実行する。
 3. publish内側の`EXLSXS.dll.manifest`（application manifest）、アセンブリ、依存DLLと、同じビルド出力の`EXLSXS.vsto`（deployment manifest）をフラットに配置する。梱包前に両manifestとDLLの版数、deploymentからapplicationへのidentityとハッシュ、applicationからDLLへのサイズとハッシュを照合し、不一致なら中断する。ホスト成果物とともにstagingへ配置し、`vpk`がinstaller、portable package、release manifestを生成する。VelopackライブラリとCLIは同じ検証済み安定版を使う。
-4. release scriptが署名を再検証してR2へuploadし、新旧両配信ホストでURLが固定された成果物のCloudflare cacheをpurgeする。両ホストの固定URLからcache-bustingや`no-cache`なしで取得した公開manifestがローカル成果物と一致してから旧世代を整理する。
+4. release scriptは通常packを実行するが、`-SkipBuild`では現在のversionのfull nupkgを`-ExpectedPackageSha256`と照合し、ビルドと再署名を省略する。これにより実機検証したパッケージと配信するパッケージの同一性を保つ。いずれの経路でも成果物の署名を再検証してR2へuploadし、新旧両配信ホストでURLが固定された成果物のCloudflare cacheをpurgeする。両ホストの固定URLからcache-bustingや`no-cache`なしで取得した公開manifestがローカル成果物と一致してから旧世代を整理する。
 5. 公開ページのgatewayはHTMLと共通CSSを`LP_CONTENT`へ、manifest、package、installerの要求を既存のR2配信へ振り分ける。
 
 ## 状態と外部境界
