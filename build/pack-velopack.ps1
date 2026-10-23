@@ -439,8 +439,7 @@ if ($LASTEXITCODE -ne 0) {
 # 2. publish 前に VSTO アセンブリ本体を Authenticode 署名する。
 #    vpk は vsto\ サブフォルダを署名対象から外すため、ここで署名しておかないと
 #    更新パッケージ内の EXLSXS.dll(.deploy) が未署名になりクライアントの信頼検証が失敗する。
-#    署名済み DLL から .deploy と ClickOnce application manifest が生成されるので、
-#    Authenticode 署名と manifest ハッシュの両方が整合する。
+#    次の工程で署名後の DLL から ClickOnce マニフェストを再生成する。
 $vstoAssembly = Join-Path $vstoBuildDir 'EXLSXS.dll'
 if (-not [string]::IsNullOrWhiteSpace($VelopackSignParams)) {
     if (-not (Test-Path -LiteralPath $vstoAssembly)) {
@@ -450,10 +449,11 @@ if (-not [string]::IsNullOrWhiteSpace($VelopackSignParams)) {
     Invoke-SignTool -SignParams $VelopackSignParams -FilePath $vstoAssembly
 }
 
-# 3. 署名済み DLL を publish する (PublishOnly は Build を再実行せず bin の成果物を使う)。
+# 3. DLL を再ビルドせず、署名後の内容でマニフェストを再生成して publish する。
+#    PublishOnly 単独では Rebuild 時点の未署名 DLL のハッシュが残る。
 $publishArgs = @(
     $vstoProject,
-    "/t:PublishOnly",
+    "/t:ResolveReferences,VisualStudioForApplicationsBuild,PublishOnly",
     "/p:Configuration=$Configuration",
     "/p:Platform=AnyCPU",
     "/p:PublishDir=$vstoPublishDirWithSlash",
@@ -501,19 +501,57 @@ New-Item -ItemType Directory -Path $vstoStagingDir -Force | Out-Null
 # ネストのまま親 .vsto を登録すると Assembly.Load("EXLSXS") がサブフォルダを探せず
 # FileNotFoundException でアドインが読み込めない (2026-06 実機で確認)。
 #   - publish 内側フォルダ: 署名済み EXLSXS.dll + フラット参照の EXLSXS.dll.manifest + 依存 DLL
-#   - bin\Release の EXLSXS.vsto: codebase がフラット参照 (publish ルートの .vsto はネスト参照なので使わない)
+#   - 同じビルド出力の EXLSXS.vsto: codebase がフラット参照 (publish ルートの .vsto はネスト参照なので使わない)
 #   - setup.exe: 前提条件ブートストラッパー (publish ルートから)
 $vstoInnerDir = Get-ChildItem -Path (Join-Path $vstoPublishDir "Application Files") -Directory | Select-Object -First 1
 if ($null -eq $vstoInnerDir) {
     throw "VSTO publish output did not contain an 'Application Files' folder: $vstoPublishDir"
 }
 Copy-Item -Path (Join-Path $vstoInnerDir.FullName "*") -Destination $vstoStagingDir -Force
-$flatDeploymentManifest = Join-Path (Split-Path -Parent $vstoProject) "bin\$Configuration\EXLSXS.vsto"
+$flatDeploymentManifest = Join-Path $vstoBuildDir 'EXLSXS.vsto'
 if (-not (Test-Path -LiteralPath $flatDeploymentManifest)) {
     throw "Flat deployment manifest was not found: $flatDeploymentManifest"
 }
 Copy-Item -Path $flatDeploymentManifest -Destination (Join-Path $vstoStagingDir "EXLSXS.vsto") -Force
 Copy-Item -Path (Join-Path $vstoPublishDir "setup.exe") -Destination $vstoStagingDir -Force
+
+# 別ビルドの配置マニフェストが混ざると署名済みでも VSTO が読み込めないため、梱包前に照合する。
+$applicationManifest = Join-Path $vstoStagingDir 'EXLSXS.dll.manifest'
+[xml]$deploymentXml = Get-Content -LiteralPath (Join-Path $vstoStagingDir 'EXLSXS.vsto') -Raw
+[xml]$applicationXml = Get-Content -LiteralPath $applicationManifest -Raw
+$rootIdentityPath = "/*[local-name()='assembly']/*[local-name()='assemblyIdentity']"
+$deploymentIdentity = $deploymentXml.SelectSingleNode($rootIdentityPath)
+$applicationIdentity = $applicationXml.SelectSingleNode($rootIdentityPath)
+$applicationReference = $deploymentXml.SelectSingleNode("/*[local-name()='assembly']/*[local-name()='dependency']/*[local-name()='dependentAssembly']")
+$referencedIdentity = $applicationReference.SelectSingleNode("*[local-name()='assemblyIdentity']")
+$payloadVersion = [Reflection.AssemblyName]::GetAssemblyName((Join-Path $vstoStagingDir 'EXLSXS.dll')).Version.ToString()
+if ($deploymentIdentity.GetAttribute('version') -ne $assemblyVersion -or $applicationIdentity.GetAttribute('version') -ne $assemblyVersion -or $payloadVersion -ne $assemblyVersion) {
+    throw 'VSTO manifest versions do not match the release version.'
+}
+foreach ($attribute in @('name', 'version', 'publicKeyToken', 'language', 'processorArchitecture', 'type')) {
+    if ($referencedIdentity.GetAttribute($attribute) -cne $applicationIdentity.GetAttribute($attribute)) {
+        throw "VSTO deployment and application manifest identities differ: $attribute"
+    }
+}
+$digest = $applicationReference.SelectSingleNode("*[local-name()='hash']/*[local-name()='DigestValue']").InnerText
+$digestAlgorithm = $applicationReference.SelectSingleNode("*[local-name()='hash']/*[local-name()='DigestMethod']").GetAttribute('Algorithm')
+$algorithm = switch -Regex ($digestAlgorithm) { 'sha256$' { 'SHA256'; break }; 'sha1$' { 'SHA1'; break }; default { throw "Unsupported manifest digest algorithm: $digestAlgorithm" } }
+$manifestHash = Get-FileHash -LiteralPath $applicationManifest -Algorithm $algorithm
+$actualDigest = [Convert]::ToBase64String([Convert]::FromHexString($manifestHash.Hash))
+if ($digest -cne $actualDigest) { throw 'VSTO application manifest digest does not match its deployment reference.' }
+
+$assemblyReference = $applicationXml.SelectSingleNode("//*[local-name()='dependentAssembly' and @codebase='EXLSXS.dll']")
+$assemblyPath = Join-Path $vstoStagingDir 'EXLSXS.dll'
+if ($null -eq $assemblyReference -or [long]$assemblyReference.GetAttribute('size') -ne (Get-Item -LiteralPath $assemblyPath).Length) {
+    throw 'VSTO assembly size does not match its application manifest reference.'
+}
+$assemblyDigestAlgorithm = $assemblyReference.SelectSingleNode("*[local-name()='hash']/*[local-name()='DigestMethod']").GetAttribute('Algorithm')
+$algorithm = switch -Regex ($assemblyDigestAlgorithm) { 'sha256$' { 'SHA256'; break }; 'sha1$' { 'SHA1'; break }; default { throw "Unsupported assembly digest algorithm: $assemblyDigestAlgorithm" } }
+$assemblyHash = Get-FileHash -LiteralPath $assemblyPath -Algorithm $algorithm
+$actualAssemblyDigest = [Convert]::ToBase64String([Convert]::FromHexString($assemblyHash.Hash))
+if ($actualAssemblyDigest -cne $assemblyReference.SelectSingleNode("*[local-name()='hash']/*[local-name()='DigestValue']").InnerText) {
+    throw 'VSTO assembly digest does not match its application manifest reference.'
+}
 
 # 前提条件ブートストラッパー (vsto\setup.exe) も Authenticode 署名する。
 # vpk は vsto\ サブフォルダを署名対象から外すため、ここで署名しないと setup.exe が未署名のまま残り、
