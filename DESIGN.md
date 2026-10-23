@@ -14,8 +14,8 @@ EXLSXSは、Excelブック内の全ワークシートへ表示モード、表示
 | `EXLSXS.Host/` | .NET 10 Windows | Velopackのinstall/update/uninstall callback、前提条件確認、VSTO登録、Windows起動時登録、自動更新、更新パッケージの署名検証を担う。Excelのシート操作は行わない |
 | `build/pack-velopack.ps1` | PowerShell | VSTO publish、ホストpublish、フラットなstaging構築、署名、`vpk pack`を一つのパッケージング処理へまとめる |
 | `scripts/release-local.ps1` | PowerShell | リリース前検査、署名付きpack、署名検証、R2 upload、Cloudflare cache purge、公開manifest確認、旧世代ファイルの整理を直列実行する |
-| `../vps-web/lp/exlsxs/` | Cloudflare Worker + R2 custom domain | `/`と`/index.html`ではランディングページを返し、それ以外の更新ファイル要求は加工せずR2へ委譲する |
-| `EXLSXS.Host.Tests/` | .NET 10 / xUnit 4 / Microsoft Testing Platform | 更新元判定、更新設定、署名検証用の正規化規則など、ホストの外部境界に近い規則を検証する |
+| `../vps-web/lp/exlsxs/` | Cloudflare Worker + `LP_CONTENT` service binding | `/`と`/index.html`のHTMLおよび`/common.css`をbinding先から取得する。gatewayはそれ以外の要求を`fetch(request)`で既存のR2配信へ委譲する |
+| `EXLSXS.Host.Tests/` | .NET 10 / `xunit.v3` / Microsoft.NET.Test.Sdk | 更新元判定、更新設定、署名検証用の正規化規則など、ホストの外部境界に近い規則を検証する |
 
 ## データフロー
 
@@ -47,10 +47,10 @@ EXLSXSは、Excelブック内の全ワークシートへ表示モード、表示
 ### パッケージ作成と公開
 
 1. `Directory.Build.props`の`Version`からVSTO、ホスト、Velopack成果物のversionを導出する。
-2. VSTO publish成果物を`.vsto`、deployment manifest、アセンブリ、依存DLLが同じ階層にある形へ整え、ホスト成果物とともにVelopack stagingへ配置する。
-3. `vpk`がinstaller、portable package、release manifestを生成する。VelopackライブラリとCLIは同じ検証済み安定版を使う。
+2. VSTOをRebuildし、配布用DLLをAuthenticode署名してから、DLLを再ビルドせずにClickOnceマニフェストを再生成してpublishする。`PublishOnly`単独では署名前のDLLのハッシュが残るため、参照解決と`VisualStudioForApplicationsBuild`を先に実行する。
+3. publish内側の`EXLSXS.dll.manifest`（application manifest）、アセンブリ、依存DLLと、同じビルド出力の`EXLSXS.vsto`（deployment manifest）をフラットに配置する。梱包前に両manifestとDLLの版数、deploymentからapplicationへのidentityとハッシュ、applicationからDLLへのサイズとハッシュを照合し、不一致なら中断する。ホスト成果物とともにstagingへ配置し、`vpk`がinstaller、portable package、release manifestを生成する。VelopackライブラリとCLIは同じ検証済み安定版を使う。
 4. release scriptが署名を再検証してR2へuploadし、新旧両配信ホストでURLが固定された成果物のCloudflare cacheをpurgeする。両ホストの固定URLからcache-bustingや`no-cache`なしで取得した公開manifestがローカル成果物と一致してから旧世代を整理する。
-5. Cloudflare Workerはランディングページだけを処理し、manifest、package、installerなどの配信特性はR2へ委ねる。
+5. 公開ページのgatewayはHTMLと共通CSSを`LP_CONTENT`へ、manifest、package、installerの要求を既存のR2配信へ振り分ける。
 
 ## 状態と外部境界
 
@@ -71,7 +71,7 @@ EXLSXSは、Excelブック内の全ワークシートへ表示モード、表示
 - VSTOのExcel host宣言とdesigner生成物、および`.slnx`のType属性なし構成を維持する。
 - COM eventは埋め込みinterop metadataと互換な`+=`で購読する。
 - 全シート整形で一時変更したExcelのイベント、画面更新、計算モードは、COM操作の成否を問わず変更前の値へbest-effortで戻す。
-- install時だけ前提条件の自動導入と`LoadBehavior`強制を許可し、update・通常起動ではユーザーまたはOfficeが無効化した状態を保持する。
+- first runと明示的な`--register`で前提条件の自動導入と`LoadBehavior`強制を許可し、update・通常起動ではユーザーまたはOfficeが無効化した状態を保持する。
 - after-install fast callbackでは前提installerを待たず、RunOnceに次回ログオンで一度だけ実行する登録再試行を予約する。first runで先に登録できた場合またはuninstall時は予約を削除する。
 - 更新パッケージはpublisher trust設定と必須3ファイルの署名検証を通過するまで適用しない。発行元照合には`WinVerifyTrust`の検証済みprovider stateから得た署名者だけを使う。
 - リリースの固定名ファイルを更新した後は新旧両配信ホストの対象URLをCloudflare cacheからpurgeし、両方の固定URLにある公開manifestとの一致を確認するまで旧世代を整理しない。
@@ -80,7 +80,7 @@ EXLSXSは、Excelブック内の全ワークシートへ表示モード、表示
 ## 採用済みの設計判断
 
 - **VSTO本体とVelopackホストの分離**: Excel統合は.NET Framework/VSTOへ残し、installer・更新・署名検証は.NET 10ホストへ集約する。実行環境は二重になるが、VSTO互換性と現行の配布機能を両立できる。
-- **ユーザー単位の登録**: 設定、VSTO登録、起動時更新をHKCUへ置く。端末全体への管理者権限を不要にする代わりに、Windows userごとに登録状態を持つ。
+- **ユーザー単位の登録**: 設定、VSTO登録、起動時更新をHKCUへ置く。アドインの登録には管理者権限を不要にする代わりに、Windows userごとに登録状態を持つ。前提ランタイムが不足する場合の導入ではUAC昇格が発生し得る。
 - **シート単位のbest-effort処理**: COM例外や保護・非表示状態でブック全体を中断せず、適用可能なシートを処理する。部分適用になり得るため、保護シートでは書式変更を明示的に避ける。
 - **登録処理とVelopack fast callbackの分離**: after-install callbackはRunOnceの回復経路だけを短時間で登録し、前提条件導入とVSTO登録はfirst runまたは`--register`へ委ねる。インストール完了を長時間ブロックせず、first runが起動しない場合や再起動が必要な場合にも登録を再試行できる。
 - **署名検証と署名者特定の一体化**: Authenticodeの信頼判定と発行元証明書の取得に同じ`WinVerifyTrust` stateを使う。Windowsの信頼chainへ委譲しつつ、検証対象と無関係な埋め込み証明書を発行元として採用しない。
@@ -89,6 +89,4 @@ EXLSXSは、Excelブック内の全ワークシートへ表示モード、表示
 
 ## 製品ページの配信先
 
-製品ページの配信HTMLは `../vps-web/lp/exlsxs/`（編集元は `../vps-web/tools/lp/templates/`）、公開実体はVPSの `/srv/www/lp/exlsxs/`。
-Cloudflare側の中継設定は `../vps-web/deploy/lp-gateways/exlsxs/` に置く。
-公開URLと既存のR2・ライセンス通信を維持し、配信は `vps-web/deploy/deploy-lp.ps1` へ統一する。
+製品ページのHTMLは `../vps-web/lp/exlsxs/`（編集元は `../vps-web/tools/lp/templates/`）に置く。`../vps-web/deploy/lp-gateways/exlsxs/` のgatewayは `LP_CONTENT` service bindingからHTMLと共通CSSを取得し、更新ファイルは既存のR2配信へ委譲する。配信コマンドは [AGENTS.md](AGENTS.md#主要コマンド) を参照する。

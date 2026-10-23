@@ -30,29 +30,30 @@ pwsh -NoProfile -File scripts/release-local.ps1 -SkipUpload
 # リリース（署名 + R2 アップロード。SimplySign ログイン必須）
 pwsh -NoProfile -File scripts/release-local.ps1
 
-# ランディングページのデプロイ（リポジトリルートから実行・--config でファイル明示が必須）
-pwsh ../vps-web/deploy/deploy-lp.ps1
+# ランディングページのデプロイ（リポジトリルートから EXLSXS だけを指定）
+pwsh -NoProfile -File ../vps-web/deploy/deploy-lp.ps1 -Product exlsxs
 ```
 
 ## 守ること（実機で踏んだ罠）
 
 - **vsto staging はフラット構成を維持する**: `.vsto` / `.dll.manifest` / `EXLSXS.dll` / 依存 DLL を同一フォルダに並べる。vstolocal 登録は .vsto と同じフォルダを AppBase にするため、ClickOnce のネスト構成 (`Application Files\<name>_<ver>\`) のまま登録すると `Assembly.Load("EXLSXS")` が FileNotFoundException でアドインが読み込めない
 - **publish は `MapFileExtensions=false` をコマンドライン `/p:` で渡す**: csproj の PropertyGroup 値は VSTO publish ターゲットに上書きされる。`.deploy` 拡張子が付くと vstolocal がファイルを見つけられない
+- **署名後に VSTO マニフェストを再生成する**: `build/pack-velopack.ps1` の「Rebuild → DLL の Authenticode 署名 → `/t:ResolveReferences,VisualStudioForApplicationsBuild,PublishOnly`」の順序を維持する。`PublishOnly` 単独へ省略せず、フラットな `.vsto` は同じ `$vstoBuildDir` から取得する。梱包前の版数・identity・ハッシュ・DLL サイズ検証を維持し、配布処理を変更したら署名付き pack（`-SkipUpload`）がこの検証まで通ることを確認する。理由と検証範囲は [DESIGN.md](DESIGN.md#パッケージ作成と公開) を参照。
 - **VSTO ランタイム検出は `v4` と `v4R` の両キーを見る**: Office/VS 同梱導入は `v4`、再頒布パッケージは `v4R` に登録される
 - **EmbedInteropTypes=True のため COM イベントは `+=` で購読する**: 文字列ベースの `ComAwareEventInfo` はイベントメタデータが埋め込まれず NullReferenceException になる
 - **バージョンは `Directory.Build.props` の `<Version>` だけを更新する**: csproj の `ApplicationVersion` / `AssemblyVersion` / host の版数はすべて導出
 - **Velopack ライブラリと vpk CLI は同じ安定版に揃える**: ライブラリ版は `EXLSXS.Host/EXLSXS.Host.csproj`、CLI 版は `build/pack-velopack.ps1` の `$vpkVersion` が正本。片方だけ更新せず、同じ batch で更新して pack 動作を確認する
 - **VS2026 で開くには (1) csproj に標準 VSTO デザイナー構成を持たせ、(2) `.slnx` の VSTO プロジェクト行に `Type` 属性を付けない**: VS2026 でも VSTO は正式サポート（公式テンプレートが同梱され、新規テンプレートは正常にロードする）。EXLSXS が読み込めなかった原因は 2 つあり両方を満たす必要がある。
-  - **(1) csproj 側**: `<ProjectExtensions>` の `<FlavorProperties GUID="{BAA0C2D2-18E2-41B9-852F-F413020CAA33}">` に `ProjectCreationSetting="1"` 付き `<ProjectProperties>` と `<Host Name="Excel" GeneratedCodeNamespace="EXLSXS"><HostItem ... Blueprint="ThisAddIn.Designer.xml" GeneratedCode="ThisAddIn.Designer.cs" /></Host>` を持たせ、`ThisAddIn.Designer.xml`（Blueprint）と `ThisAddIn.Designer.cs`（生成コード相当: `partial class ThisAddIn` の生成メンバ + `Globals` + `ThisRibbonCollection`）を実体として置く。`ThisAddIn.cs` はユーザーコードのみにする。この `<Host>`/`<HostItem>` 宣言が無いとフレーバー初期化がアサート (`GUID が空です。 パラメーター名:serviceGuid`) で失敗する（MSBuild ビルドは Host 宣言が無くても通るため気付きにくい）。
+  - **(1) csproj 側**: `<ProjectExtensions>` の `<FlavorProperties GUID="{BAA0C2D2-18E2-41B9-852F-F413020CAA33}">` に `<ProjectProperties>` と `<Host Name="Excel" GeneratedCodeNamespace="EXLSXS"><HostItem ... Blueprint="ThisAddIn.Designer.xml" GeneratedCode="ThisAddIn.Designer.cs" /></Host>` を持たせ、`ThisAddIn.Designer.xml`（Blueprint）と `ThisAddIn.Designer.cs`（生成コード相当: `partial class ThisAddIn` の生成メンバ + `Globals` + `ThisRibbonCollection`）を実体として置く。`ThisAddIn.cs` はユーザーコードのみにする。この `<Host>`/`<HostItem>` 宣言が無いとフレーバー初期化がアサート (`GUID が空です。 パラメーター名:serviceGuid`) で失敗する（MSBuild ビルドは Host 宣言が無くても通るため気付きにくい）。
   - **(2) `.slnx` 側**: VSTO プロジェクト行は `<Project Path="EXLSXS/EXLSXS.csproj" />` と **Type 属性なし** で書く。Type 属性なしだと VS は拡張子で C# 基底型を判定し csproj の `<ProjectTypeGuids>`（`{BAA0C2D2};{FAE04EC0}` の 2 段チェーン）を読んでフレーバーをアグリゲートする。`Type="{BAA0C2D2-...}"` を付けると**外側フレーバー GUID だけ**が指定され基底型が欠けてアグリゲーションが壊れ「読み込みに失敗しました」になる（過去にこの Type 属性を回避策として入れていたが逆効果だった）。
   - 検証: `EXLSXS.csproj` を直接開く / `.slnx`（Type 無し）を開く のどちらでも `ソリューション 'EXLSXS' (3/3 のプロジェクト)` で EXLSXS が Excel ホストノード付きでロードされること。SDK のホスト/テストは Type 属性不要。
-- **リボン/コードを変えたら `%LOCALAPPDATA%\assembly\dl3` を消してから Excel を起動して動作確認する**: EXLSXS は strong-name 付きで、同じ `<Version>` から生成した `$(Version).0` のビルドは同じアセンブリ identity を持つ。VSTO/Fusion は**同一バージョンの新ビルドを「同じ物」とみなして `dl3` の旧コピーを読み続ける**ため、bin\Debug/Release を再ビルドしても Excel に反映されない。dev 反復での確認手順は「Excel 終了 → `rm -rf %LOCALAPPDATA%/assembly/dl3` → Excel 起動」。Debug と Release は identity が同一なので Fusion がどちらのコピーを使うか不定 → 確実を期すなら両構成を再ビルドしてからキャッシュを消す。リリース時は `/vava` でバージョンが上がり identity が変わるため、この罠はエンドユーザーには出ない（dev 専用）
+- **リボン/コードを変えたら `%LOCALAPPDATA%\assembly\dl3` を消してから Excel を起動して動作確認する**: EXLSXS は strong-name 付きで、同じ `<Version>` から生成した `$(Version).0` のビルドは同じアセンブリ identity を持つ。VSTO/Fusion は**同一バージョンの新ビルドを「同じ物」とみなして `dl3` の旧コピーを読み続ける**ため、bin\Debug/Release を再ビルドしても Excel に反映されない。dev 反復での確認手順は「Excel 終了 → `%LOCALAPPDATA%\assembly\dl3` のキャッシュ削除 → Excel 起動」。Debug と Release は identity が同一なので Fusion がどちらのコピーを使うか不定 → 確実を期すなら両構成を再ビルドしてからキャッシュを消す。リリース時は `/vava` でバージョンが上がり identity が変わるため、この罠はエンドユーザーには出ない（dev 専用）
 - 製品ページの配信は `vps-web/deploy/deploy-lp.ps1` を使う。公開ホスト・更新ファイルの既存経路を維持する。
 - **Velopack 配信の固定名ファイルはアップロード後に Cloudflare キャッシュをパージする**: `EXLSXS-win-Setup.exe` / `releases.win.json` / `RELEASES` / `EXLSXS-win-Portable.zip` / `assets.win.json` は URL 不変で毎リリース中身が変わるため、R2 へ上げても Cloudflare エッジが旧版を `Cache-Control: max-age=14400`（4 時間）保持し、新規ダウンロード・自動更新が旧バージョンを掴む（症状: 配信 manifest は新版なのにページから DL した Setup.exe が旧版。`CF-Cache-Status: HIT` + 古い `Last-Modified` で判別できる）。`scripts/release-local.ps1` は新旧両ホストの固定名 URL を `purge_cache` API でパージし、`releases.win.json` を cache-busting / `no-cache` なしで取得してローカル manifest との一致を確認する（バージョン付き nupkg は URL が一意なのでパージ不要）。ただし公開 Setup.exe の実体一致までは自動確認しないため、フルリリース後は両ホストの固定 URL から Setup.exe を取得し、ローカル成果物とのサイズ・SHA-256 一致と Authenticode `Valid` を確認する。不一致なら対象 URL を再パージして再確認する。手動アップロード時も同じ検証を行う
 
 ## ドメイン移行（2026-07 開始・期限 2027/05/31）
 
-屋号を **Kagayoi** に統一したため、配信ドメインを `nephilim.jp` から `kagayoi.com` へ移行中。方針の全体像はユーザーグローバルの `CLAUDE.md` §屋号とドメイン を参照する。
+配信ドメインを `nephilim.jp` から `kagayoi.com` へ移行中。公開入口の構造は [DESIGN.md](DESIGN.md#状態と外部境界) を参照する。
 
 - **旧ドメイン `nephilim.jp` はレジストラで廃止申請済みで 2027/05/31 に失効する**（延長しない）。それまでに出荷済みバイナリを新ドメインへ移行しきる。
 - 旧ホストの Worker route / custom domain は**期限まで消さない**。消すと出荷済みアプリの自動更新が止まる。
@@ -61,6 +62,4 @@ pwsh ../vps-web/deploy/deploy-lp.ps1
 
 ## 製品ページの配信先
 
-製品ページの配信HTMLは `../vps-web/lp/exlsxs/`（編集元は `../vps-web/tools/lp/templates/`）、公開実体はVPSの `/srv/www/lp/exlsxs/`。
-Cloudflare側の中継設定は `../vps-web/deploy/lp-gateways/exlsxs/` に置く。
-公開URLと既存のR2・ライセンス通信を維持し、配信は `vps-web/deploy/deploy-lp.ps1` へ統一する。
+製品ページのHTML・gateway・service bindingの構造は [DESIGN.md](DESIGN.md#製品ページの配信先) を参照する。配信には「主要コマンド」の `deploy-lp.ps1 -Product exlsxs` を使い、公開URLと既存のR2・ライセンス通信を維持する。
