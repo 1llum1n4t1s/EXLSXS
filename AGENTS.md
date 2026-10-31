@@ -67,3 +67,12 @@ pwsh -NoProfile -File ../vps-web/deploy/deploy-lp.ps1 -Product exlsxs
 ## 製品ページの配信先
 
 製品ページのHTML・gateway・service bindingの構造は [DESIGN.md](DESIGN.md#製品ページの配信先) を参照する。配信には「主要コマンド」の `deploy-lp.ps1 -Product exlsxs` を使い、公開URLと既存のR2・ライセンス通信を維持する。
+
+### ローカルリリースの実行
+
+リポジトリルートで事前確認を行い、失敗時は「署名証明書が見つからないよ。SimplySign Desktop を起動してトークンでログインしてから /vava を再実行してね」。公開依頼時に成功を確認してから実行する。
+
+```powershell
+pwsh -NoProfile -Command 'if (-not (Get-ChildItem Cert:\CurrentUser\My | Where-Object { $_.Subject -like "CN=Open Source Developer Yuichiro Shinozaki*" -and $_.NotAfter -gt (Get-Date) })) { exit 1 }'
+if ($LASTEXITCODE -eq 0) { pwsh -NoProfile -File scripts/release-local.ps1 } else { throw '署名証明書が見つからないよ。SimplySign Desktop を起動してトークンでログインしてから /vava を再実行してね' }
+```

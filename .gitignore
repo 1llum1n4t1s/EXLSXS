@@ -10,4 +10,3 @@ artifacts/
 UpgradeLog*.htm
 
 # ローカルリリース設定（証明書 CN 等の個人情報を含むため追跡しない）
-vava.config.json
