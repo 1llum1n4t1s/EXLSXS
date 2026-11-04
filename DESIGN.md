@@ -85,7 +85,7 @@ EXLSXSは、Excelブック内の全ワークシートへ表示モード、表示
 - **登録処理とVelopack fast callbackの分離**: after-install callbackはRunOnceの回復経路だけを短時間で登録し、前提条件導入とVSTO登録はfirst runまたは`--register`へ委ねる。インストール完了を長時間ブロックせず、first runが起動しない場合や再起動が必要な場合にも登録を再試行できる。
 - **署名検証と署名者特定の一体化**: Authenticodeの信頼判定と発行元証明書の取得に同じ`WinVerifyTrust` stateを使う。Windowsの信頼chainへ委譲しつつ、検証対象と無関係な埋め込み証明書を発行元として採用しない。
 - **Worker routeとR2 custom domainの重ね合わせ**: 同じhostで案内ページと更新配信を提供し、非root pathはR2へ透過委譲する。構成は簡潔になる一方、Workerは更新ファイルのRange、cache、Content-Typeを変更しないことが前提となる。
-- **versionと配布toolの固定**: 製品versionを一箇所へ集約し、WranglerとVelopack CLIは検証済みversionへ固定する。自動追随より再現可能な署名・配布を優先する。
+- **versionと配布toolの固定**: 製品versionを一箇所へ集約し、R2配布は同梱PowerShell/.NET helperを使用し、Velopack CLIは検証済みversionへ固定する。自動追随より再現可能な署名・配布を優先する。
 
 ## 製品ページの配信先
 

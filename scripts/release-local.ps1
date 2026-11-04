@@ -1,4 +1,4 @@
-# release-local.ps1 — ローカル署名付き Velopack リリース (EXLSXS / VSTO アドイン)
+﻿# release-local.ps1 — ローカル署名付き Velopack リリース (EXLSXS / VSTO アドイン)
 #
 # SimplySign (Certum クラウド署名) は Desktop 接続 + スマホトークンが必要で
 # GitHub Actions からは署名できないため、リリースは本スクリプトでローカル実行する。
@@ -58,6 +58,24 @@ function Remove-LocalWorkItem {
     }
 }
 
+# R2 への書込みは同梱の PowerShell/.NET 実装で行う。
+. (Join-Path $PSScriptRoot 'R2Distribution.Common.ps1')
+
+function Send-ReleaseR2Object {
+    param([Parameter(Mandatory)][System.IO.FileInfo]$File)
+    # バージョン付き成果物は不変、固定 URL とメタデータは毎回再検証する。
+    $immutable = $File.Extension -eq '.nupkg' -or $File.Name -match '\d+\.\d+\.\d+'
+    $cacheControl = if ($immutable) { 'public, max-age=31536000, immutable' } else { 'no-cache, must-revalidate' }
+    $contentType = switch ($File.Extension.ToLowerInvariant()) {
+        '.json' { 'application/json'; break }
+        '.exe' { 'application/vnd.microsoft.portable-executable'; break }
+        '.zip' { 'application/zip'; break }
+        default { if ($File.Name -like 'RELEASES*') { 'text/plain; charset=utf-8' } else { 'application/octet-stream' } }
+    }
+    $null = Publish-R2Object -AccountId $AccountId -Bucket $Bucket -FilePath $File.FullName `
+        -ApiToken $env:CLOUDFLARE_API_TOKEN -ContentType $contentType -CacheControl $cacheControl -Immutable:$immutable
+}
+
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
@@ -73,7 +91,6 @@ $CertSubjectName = 'Open Source Developer Yuichiro Shinozaki'
 $SigningThumbprint = '6285702C9AF1FCFE3D9FE815B7F7F625508130C0'
 # /n (Subject 名) で選択: 証明書の年次更新で thumbprint が変わっても署名自体は動く
 $SignParams      = "/n `"$CertSubjectName`" /fd SHA256 /td SHA256 /tr http://time.certum.pl"
-$WranglerVersion = '4.152.0'  # サプライチェーン対策でバージョン固定
 
 # 更新パッケージ内で EXLSXS 発行者の Authenticode 署名を要求する必須ファイル。
 # Host.exe/Host.dll/EXLSXS.dll はクライアントの UpdatePackageTrustVerifier が適用前に検証する。
@@ -247,13 +264,11 @@ if ($SkipUpload) {
 # releases.{channel}.json (manifest) は同 channel の旧版を上書き、*.nupkg は put のみ。
 # manifest を最後にアップロードしてフィード整合性の時間窓を防ぐ。
 Write-Host '== R2 アップロード ==' -ForegroundColor Cyan
-$files = Get-ChildItem $ReleaseDir -File | Sort-Object { $_.Name -like 'releases.*.json' }  # manifest を末尾へ
+$files = Get-ChildItem $ReleaseDir -File | Sort-Object @{ Expression = { if ($_.Name -like 'releases.*.json') { 3 } elseif ($_.Name -like 'RELEASES*') { 2 } elseif ($_.Name -like 'assets.*.json') { 1 } else { 0 } } }, Name
 $uploaded = 0
 foreach ($f in $files) {
     Write-Host "  ↑ $($f.Name)"
-    Invoke-Native "R2 put ($($f.Name))" {
-        pnpm dlx "wrangler@$WranglerVersion" r2 object put "$Bucket/$($f.Name)" --file $f.FullName --remote
-    }
+    Send-ReleaseR2Object -File $f
     $uploaded++
 }
 Write-Host "✅ R2 アップロード完了: $uploaded ファイル"
