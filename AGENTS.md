@@ -72,7 +72,7 @@ pwsh -NoProfile -File ../vps-web/deploy/deploy-lp.ps1 -Product exlsxs
 
 ### ローカルリリースの実行
 
-署名は Sigilune（Certum のクラウド鍵）で行い、SimplySign Desktop は使わない。Authenticode 署名に加え、VSTO の `EXLSXS.dll.manifest` / `EXLSXS.vsto` も `sigilune sign-manifest` で署名する（MSBuild の publish はこの実行だけの使い捨て証明書で行い、ステージング後に署名し直す）。公開依頼時は GitHub Actions の `release.yml` を手動起動し、Environment `release` の承認後に実行される。ローカルで実行するときは、先に `sigilune status` で登録を確認してから実行する。
+署名は Sigilune（Certum のクラウド鍵）で行い、SimplySign Desktop は使わない。Authenticode 署名に加え、VSTO の `EXLSXS.dll.manifest` / `EXLSXS.vsto` も `sigilune sign-manifest` で署名する（MSBuild の publish はこの実行だけの使い捨て証明書で行い、ステージング後に署名し直す）。公開依頼時は GitHub Actions の `release.yml` を手動起動すると、承認待ちなしで実行される（Environment `release` は承認者なし・ブランチ制限だけ）。ローカルで実行するときは、先に `sigilune status` で登録を確認してから実行する。
 
 ```powershell
 sigilune status
