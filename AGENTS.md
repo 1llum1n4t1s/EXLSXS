@@ -27,7 +27,9 @@ dotnet test EXLSXS.Host.Tests/EXLSXS.Host.Tests.csproj -c Release
 # 署名付きパック（R2 アップロード無し）
 pwsh -NoProfile -File scripts/release-local.ps1 -SkipUpload
 
-# リリース（署名 + R2 アップロード。SimplySign ログイン必須）
+# リリース（署名 + R2 アップロード）。通常は GitHub Actions の release.yml を手動起動する
+gh workflow run release.yml --ref main
+# ローカルで同じ手順を実行する場合（Sigilune 1.1.0 以降と `sigilune setup` 済みが前提）
 pwsh -NoProfile -File scripts/release-local.ps1
 
 # 実機検証済み成果物の配信（変数には実機検証時に記録した full.nupkg の SHA-256 を設定）
@@ -70,9 +72,9 @@ pwsh -NoProfile -File ../vps-web/deploy/deploy-lp.ps1 -Product exlsxs
 
 ### ローカルリリースの実行
 
-リポジトリルートで事前確認を行い、失敗時は「署名証明書が見つからないよ。SimplySign Desktop を起動してトークンでログインしてから /vava を再実行してね」。公開依頼時に成功を確認してから実行する。
+署名は Sigilune（Certum のクラウド鍵）で行い、SimplySign Desktop は使わない。Authenticode 署名に加え、VSTO の `EXLSXS.dll.manifest` / `EXLSXS.vsto` も `sigilune sign-manifest` で署名する（MSBuild の publish はこの実行だけの使い捨て証明書で行い、ステージング後に署名し直す）。公開依頼時は GitHub Actions の `release.yml` を手動起動し、Environment `release` の承認後に実行される。ローカルで実行するときは、先に `sigilune status` で登録を確認してから実行する。
 
 ```powershell
-pwsh -NoProfile -Command 'if (-not (Get-ChildItem Cert:\CurrentUser\My | Where-Object { $_.Subject -like "CN=Open Source Developer Yuichiro Shinozaki*" -and $_.NotAfter -gt (Get-Date) })) { exit 1 }'
-if ($LASTEXITCODE -eq 0) { pwsh -NoProfile -File scripts/release-local.ps1 } else { throw '署名証明書が見つからないよ。SimplySign Desktop を起動してトークンでログインしてから /vava を再実行してね' }
+sigilune status
+if ($LASTEXITCODE -eq 0) { pwsh -NoProfile -File scripts/release-local.ps1 } else { throw 'Sigilune の登録が見つからないよ。sigilune setup で Certum アカウントを登録してから /vava を再実行してね' }
 ```

@@ -1,8 +1,9 @@
 ﻿# release-local.ps1 — ローカル署名付き Velopack リリース (EXLSXS / VSTO アドイン)
 #
-# SimplySign (Certum クラウド署名) は Desktop 接続 + スマホトークンが必要で
-# GitHub Actions からは署名できないため、リリースは本スクリプトでローカル実行する。
-# 旧 CI リリース (.github/workflows/velopack-release.yml) はこのスクリプトに置換済み。
+# 署名は Sigilune (Certum SimplySign のクラウド鍵で署名する CLI、1.1.0 以降) で行う。
+# Authenticode 署名に加え、VSTO の ClickOnce マニフェスト (.dll.manifest / .vsto) も同じ鍵で署名する。
+# 通常のリリースは GitHub Actions の .github/workflows/release.yml (手動起動・Environment "release") が
+# 本スクリプトを実行する。ローカル実行も同じ手順で動き、検証や再開に使う。
 #
 # EXLSXS は「VSTO アドイン (.NET Fw 4.8.1, Library) + Velopack ホスト」の 2 段構成で、
 # ビルド/パッケージングは build/pack-velopack.ps1 が一括 (VSTO publish + ClickOnce 署名 →
@@ -10,9 +11,10 @@
 # プリフライト → pack 呼び出し → 署名検証 → R2 アップロード → 配信確認 → 旧版掃除 を被せる。
 #
 # 前提:
-#   - SimplySign Desktop が接続済み (証明書が CurrentUser\My に見えていること)
+#   - Sigilune を使えること (scripts/Sigilune.Common.ps1 参照)。
+#     ローカルは `sigilune setup` で Certum アカウントを登録済み、CI は SIGILUNE_EMAIL / SIGILUNE_TOTP_URI を渡す
 #   - Directory.Build.props の <Version> がリリースしたいバージョンであること (/vava 済み)
-#   - D:\Dev\Secret\secrets.json に cloudflare.api_token があること
+#   - 環境変数 CLOUDFLARE_API_TOKEN (CI)、なければ D:\Dev\Secret\secrets.json の cloudflare.api_token (ローカル)
 #
 # 使い方:
 #   pwsh scripts/release-local.ps1                # フルリリース (build + sign + upload + cleanup)
@@ -87,10 +89,9 @@ $AccountId       = '10901bfadbf1005164774a7350082985'
 $Channel         = 'win'
 $SecretsPath     = 'D:\Dev\Secret\secrets.json'
 $CertSubjectName = 'Open Source Developer Yuichiro Shinozaki'
-# 署名証明書 thumbprint (ClickOnce manifest 署名 + Authenticode 署名者の期待値)
+# 署名証明書 thumbprint (ClickOnce manifest 署名 + Authenticode 署名者の期待値)。
+# クライアントは更新パッケージの署名者をこの値で照合するため、Sigilune の証明書と一致しなければ止める。
 $SigningThumbprint = '6285702C9AF1FCFE3D9FE815B7F7F625508130C0'
-# /n (Subject 名) で選択: 証明書の年次更新で thumbprint が変わっても署名自体は動く
-$SignParams      = "/n `"$CertSubjectName`" /fd SHA256 /td SHA256 /tr http://time.certum.pl"
 
 # 更新パッケージ内で EXLSXS 発行者の Authenticode 署名を要求する必須ファイル。
 # Host.exe/Host.dll/EXLSXS.dll はクライアントの UpdatePackageTrustVerifier が適用前に検証する。
@@ -132,19 +133,26 @@ $version = if ($versionNode) { $versionNode.InnerText.Trim() } else { $null }
 if (-not $version) { throw 'Directory.Build.props から <Version> を取得できませんでした' }
 Write-Host "バージョン: $version"
 
-# SimplySign 接続確認 (証明書が見えなければ署名できないので最初に落とす)
-$cert = Get-ChildItem Cert:\CurrentUser\My |
-    Where-Object { $_.Subject -like "CN=$CertSubjectName*" -and $_.NotAfter -gt (Get-Date) }
-if (-not $cert) {
-    throw "署名証明書 (CN=$CertSubjectName) が見つかりません。SimplySign Desktop を起動してトークンでログインしてください。"
+# 署名の準備 (Sigilune の場所とクラウドへのログインを、ビルド前に確認して早く落とす)。
+# 再ビルドしない -SkipBuild では署名しないためログインしない。
+. (Join-Path $PSScriptRoot 'Sigilune.Common.ps1')
+if (-not $SkipBuild) {
+    $Sigilune = Resolve-SigiluneExe
+    Connect-Sigilune -SigiluneExe $Sigilune
+    $sigiluneCertificate = Get-SigiluneCertificate -SigiluneExe $Sigilune
+    if ($sigiluneCertificate.Thumbprint -ne $SigningThumbprint -or $sigiluneCertificate.Subject -ne $CertSubjectName) {
+        throw "Sigilune の署名証明書 ($($sigiluneCertificate.Subject), $($sigiluneCertificate.Thumbprint)) がクライアントの期待値と一致しません。証明書を更新したときは SigningThumbprint とクライアントの信頼設定を先に更新してください。"
+    }
+    Write-Host "署名証明書: $($sigiluneCertificate.Subject) ($($sigiluneCertificate.Thumbprint))"
 }
-Write-Host "署名証明書: $($cert.Subject) (期限 $($cert.NotAfter.ToString('yyyy-MM-dd')))"
 
-# Cloudflare トークン (アップロード時のみ必要)
+# Cloudflare トークン (アップロード時のみ必要)。CI は環境変数、ローカルは secrets.json から読む。
 if (-not $SkipUpload) {
-    $secrets = Get-Content $SecretsPath -Raw | ConvertFrom-Json
-    if (-not $secrets.cloudflare.api_token) { throw "secrets.json に cloudflare.api_token が見つかりません" }
-    $env:CLOUDFLARE_API_TOKEN  = $secrets.cloudflare.api_token
+    if (-not $env:CLOUDFLARE_API_TOKEN) {
+        $secrets = Get-Content $SecretsPath -Raw | ConvertFrom-Json
+        if (-not $secrets.cloudflare.api_token) { throw "secrets.json に cloudflare.api_token が見つかりません" }
+        $env:CLOUDFLARE_API_TOKEN = $secrets.cloudflare.api_token
+    }
     $env:CLOUDFLARE_ACCOUNT_ID = $AccountId
 }
 
@@ -162,13 +170,15 @@ if ($SkipBuild) {
     Write-Host '検証済みパッケージを使用し、ビルドと再署名を省略します。'
 }
 else {
+# 出力先に前回の配布物が無いとき (CI) は配信元の最新版を差分の基準として取得する。
+# ただし -SkipUpload の試行では取得しない (公開済みと同じ版のまま試すと vpk が同版を拒否するため)。
+$downloadArgs = @(if (-not $SkipUpload) { '-DownloadPreviousRelease' })
 Invoke-Native 'pack-velopack.ps1' {
-    pwsh -NoProfile -ExecutionPolicy Bypass -File $PackScript `
+    pwsh -NoProfile -ExecutionPolicy Bypass -File $PackScript @downloadArgs `
         -Channel $Channel `
         -UpdateSource $BaseUrl `
         -UpdateSourceKind Simple `
-        -VstoSigningThumbprint $SigningThumbprint `
-        -VelopackSignParams $SignParams `
+        -SigiluneExe $Sigilune `
         -ExpectedPublisherThumbprint $SigningThumbprint `
         -ExpectedPublisherSubject $CertSubjectName `
         -RequireVelopackSigning

@@ -48,7 +48,22 @@ param(
     [string]$ExpectedPublisherSubject,
 
     [Parameter(Mandatory = $false)]
-    [switch]$RequireVelopackSigning
+    [switch]$RequireVelopackSigning,
+
+    # Sigilune (Certum SimplySign のクラウド鍵で署名する CLI、1.1.0 以降) の sigilune.exe。
+    # 指定すると Authenticode 署名と ClickOnce マニフェスト署名をすべて Sigilune で行い、
+    # 証明書ストアの証明書・PFX・signtool の引数は使わない (GitHub Actions でのリリース用)。
+    [Parameter(Mandatory = $false)]
+    [string]$SigiluneExe,
+
+    # vpk の出力先。既定はリポジトリの artifacts\velopack-releases (前回までの配布物を差分の基準に使う)。
+    [Parameter(Mandatory = $false)]
+    [string]$ReleaseDirectory,
+
+    # 出力先に前回の配布物が無いとき (GitHub Actions の新しいランナーなど)、配信元から最新版を取得して
+    # 差分パッケージ (delta) とリリース一覧の基準にする。
+    [Parameter(Mandatory = $false)]
+    [switch]$DownloadPreviousRelease
 )
 
 
@@ -96,7 +111,7 @@ $hostPublishDir = Join-Path $artifactsDir 'host-publish'
 $stagingDir = Join-Path $artifactsDir 'velopack-staging'
 $vstoBuildDir = Join-Path $artifactsDir 'vsto-build'
 $vstoObjDir = Join-Path $artifactsDir 'vsto-obj'
-$releaseDir = Join-Path $root 'artifacts\velopack-releases'
+$releaseDir = if ([string]::IsNullOrWhiteSpace($ReleaseDirectory)) { Join-Path $root 'artifacts\velopack-releases' } else { [IO.Path]::GetFullPath($ReleaseDirectory) }
 
 function Assert-NoReparseAncestor {
     param([Parameter(Mandatory = $true)][string]$Path)
@@ -206,6 +221,16 @@ function Get-MSBuildPath {
     }
 
     return "MSBuild.exe"
+}
+
+# VSTO のビルドターゲットは $(VisualStudioVersion) の Office ツールを読み込む。csproj の既定は 18.0 (VS 2026) なので、
+# VS 2022 しか無い環境 (GitHub の windows-2022 ランナーなど) でも動くよう、実際に入っている版を渡す。
+function Get-VisualStudioVersion {
+    $vsWhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
+    if (-not (Test-Path -LiteralPath $vsWhere)) { return $null }
+    $installed = & $vsWhere -latest -requires Microsoft.Component.MSBuild -property installationVersion | Select-Object -First 1
+    if ([string]::IsNullOrWhiteSpace($installed)) { return $null }
+    return $installed.Split('.')[0] + '.0'
 }
 
 function Get-SignToolPath {
@@ -332,6 +357,7 @@ function Assert-CertificateInCurrentUserStore {
 }
 
 $scratchCreated = $false
+$temporaryManifestCertificate = $null
 $packFailure = $null
 $cleanupFailure = $null
 try {
@@ -381,8 +407,33 @@ $VelopackSignParams = Get-ValueOrEnvironment -Value $VelopackSignParams -Environ
 $VelopackAzureTrustedSignFile = Get-ValueOrEnvironment -Value $VelopackAzureTrustedSignFile -EnvironmentName "EXLSXS_VELOPACK_AZURE_TRUSTED_SIGN_FILE"
 $ExpectedPublisherThumbprint = Get-ValueOrEnvironment -Value $ExpectedPublisherThumbprint -EnvironmentName "EXLSXS_EXPECTED_PUBLISHER_THUMBPRINT"
 $ExpectedPublisherSubject = Get-ValueOrEnvironment -Value $ExpectedPublisherSubject -EnvironmentName "EXLSXS_EXPECTED_PUBLISHER_SUBJECT"
+$SigiluneExe = Get-ValueOrEnvironment -Value $SigiluneExe -EnvironmentName "EXLSXS_SIGILUNE_EXE"
+$useSigilune = -not [string]::IsNullOrWhiteSpace($SigiluneExe)
 $hasExplicitExpectedPublisherThumbprint = -not [string]::IsNullOrWhiteSpace($ExpectedPublisherThumbprint)
 
+if ($useSigilune) {
+    if (-not [string]::IsNullOrWhiteSpace($VelopackSignParams) -or -not [string]::IsNullOrWhiteSpace($VelopackAzureTrustedSignFile)) {
+        throw "Sigilune signing cannot be combined with EXLSXS_VELOPACK_SIGN_PARAMS or EXLSXS_VELOPACK_AZURE_TRUSTED_SIGN_FILE."
+    }
+    . (Join-Path $root 'scripts\Sigilune.Common.ps1')
+    # ビルド前にログインして、資格情報の不備を早く検出する (失敗しても自動再試行しない)。
+    Connect-Sigilune -SigiluneExe $SigiluneExe
+    $sigiluneCertificate = Get-SigiluneCertificate -SigiluneExe $SigiluneExe
+    if ($hasExplicitExpectedPublisherThumbprint -and (Normalize-Thumbprint -Thumbprint $ExpectedPublisherThumbprint) -ne $sigiluneCertificate.Thumbprint) {
+        throw "The Sigilune signing certificate ($($sigiluneCertificate.Thumbprint)) does not match the expected publisher thumbprint."
+    }
+    if ([string]::IsNullOrWhiteSpace($ExpectedPublisherThumbprint)) { $ExpectedPublisherThumbprint = $sigiluneCertificate.Thumbprint }
+    if ([string]::IsNullOrWhiteSpace($ExpectedPublisherSubject)) { $ExpectedPublisherSubject = $sigiluneCertificate.Subject }
+    Write-Host "  Signing: Sigilune ($($sigiluneCertificate.Subject), $($sigiluneCertificate.Thumbprint))"
+
+    # MSBuild の VSTO publish は証明書ストアの証明書でマニフェストを署名する前提なので、この実行だけの
+    # 使い捨て自己署名証明書でビルドし、ステージング後に Sigilune がクラウド鍵で署名し直す
+    # (既存署名の除去と publicKeyToken・publisherIdentity の置換は sign-manifest が行う)。
+    $temporaryManifestCertificate = New-SelfSignedCertificate -Type CodeSigningCert -Subject "CN=EXLSXS temporary build certificate" `
+        -CertStoreLocation Cert:\CurrentUser\My -HashAlgorithm SHA256 -NotAfter (Get-Date).AddDays(1)
+    $VstoSigningThumbprint = Normalize-Thumbprint -Thumbprint $temporaryManifestCertificate.Thumbprint
+}
+else {
 $importedThumbprint = Import-VstoSigningCertificate `
     -PfxPath $VstoSigningPfxPath `
     -PfxPassword $VstoSigningPfxPassword `
@@ -406,11 +457,12 @@ if ([string]::IsNullOrWhiteSpace($ExpectedPublisherThumbprint)) {
     $ExpectedPublisherThumbprint = $VstoSigningThumbprint
 }
 
-$ExpectedPublisherThumbprint = Normalize-Thumbprint -Thumbprint $ExpectedPublisherThumbprint
-
 if ($RequireVelopackSigning -and [string]::IsNullOrWhiteSpace($VelopackSignParams) -and [string]::IsNullOrWhiteSpace($VelopackAzureTrustedSignFile)) {
     throw "Velopack signing is required, but neither EXLSXS_VELOPACK_SIGN_PARAMS nor EXLSXS_VELOPACK_AZURE_TRUSTED_SIGN_FILE was supplied."
 }
+}
+
+$ExpectedPublisherThumbprint = Normalize-Thumbprint -Thumbprint $ExpectedPublisherThumbprint
 
 # publish 成果物は毎回クリーンに作り直す。前回の .deploy 等の残骸が残ると、
 # 増分 publish で混ざってマニフェスト記載の論理名と物理ファイル名がずれる原因になる。
@@ -418,6 +470,8 @@ if ($RequireVelopackSigning -and [string]::IsNullOrWhiteSpace($VelopackSignParam
 New-Item -ItemType Directory -Path $vstoPublishDir -Force | Out-Null
 
 $msbuild = Get-MSBuildPath
+$visualStudioVersion = Get-VisualStudioVersion
+$visualStudioVersionArgs = @(if ($visualStudioVersion) { "/p:VisualStudioVersion=$visualStudioVersion" })
 $vstoPublishDirWithSlash = $vstoPublishDir.TrimEnd('\') + '\'
 
 # 1. VSTO アセンブリをビルドする (publish はまだ行わない)。
@@ -430,7 +484,7 @@ $buildArgs = @(
     "/p:BaseIntermediateOutputPath=$vstoObjDir\",
     "/p:MSBuildProjectExtensionsPath=$vstoObjDir\",
     "/p:ManifestCertificateThumbprint=$VstoSigningThumbprint"
-)
+) + $visualStudioVersionArgs
 & $msbuild @buildArgs
 if ($LASTEXITCODE -ne 0) {
     throw "VSTO build failed with exit code $LASTEXITCODE"
@@ -441,7 +495,11 @@ if ($LASTEXITCODE -ne 0) {
 #    更新パッケージ内の EXLSXS.dll(.deploy) が未署名になりクライアントの信頼検証が失敗する。
 #    次の工程で署名後の DLL から ClickOnce マニフェストを再生成する。
 $vstoAssembly = Join-Path $vstoBuildDir 'EXLSXS.dll'
-if (-not [string]::IsNullOrWhiteSpace($VelopackSignParams)) {
+if ($useSigilune) {
+    Write-Host "Authenticode-signing VSTO assembly with Sigilune: $vstoAssembly"
+    Invoke-SigiluneSign -SigiluneExe $SigiluneExe -Path $vstoAssembly -CertificateSubjectName $ExpectedPublisherSubject
+}
+elseif (-not [string]::IsNullOrWhiteSpace($VelopackSignParams)) {
     if (-not (Test-Path -LiteralPath $vstoAssembly)) {
         throw "VSTO assembly was not found for signing: $vstoAssembly"
     }
@@ -467,7 +525,7 @@ $publishArgs = @(
     # vstolocal ロードが論理名 EXLSXS.dll を見つけられず FileNotFound でアドインが読み込めない。
     "/p:MapFileExtensions=false",
     "/p:ManifestCertificateThumbprint=$VstoSigningThumbprint"
-)
+) + $visualStudioVersionArgs
 & $msbuild @publishArgs
 if ($LASTEXITCODE -ne 0) {
     throw "VSTO publish failed with exit code $LASTEXITCODE"
@@ -515,8 +573,16 @@ if (-not (Test-Path -LiteralPath $flatDeploymentManifest)) {
 Copy-Item -Path $flatDeploymentManifest -Destination (Join-Path $vstoStagingDir "EXLSXS.vsto") -Force
 Copy-Item -Path (Join-Path $vstoPublishDir "setup.exe") -Destination $vstoStagingDir -Force
 
-# 別ビルドの配置マニフェストが混ざると署名済みでも VSTO が読み込めないため、梱包前に照合する。
 $applicationManifest = Join-Path $vstoStagingDir 'EXLSXS.dll.manifest'
+if ($useSigilune) {
+    # 使い捨て証明書の署名を Certum のクラウド鍵の署名に置き換える。.vsto 内のアプリケーション マニフェスト参照
+    # (サイズ・ダイジェスト・publicKeyToken) も sign-manifest が更新するので、下の照合はその結果を検査する。
+    Write-Host "Signing VSTO manifests with Sigilune"
+    Invoke-SigiluneManifestSign -SigiluneExe $SigiluneExe -ApplicationManifest $applicationManifest `
+        -DeploymentManifest (Join-Path $vstoStagingDir 'EXLSXS.vsto') -CertificateSubjectName $ExpectedPublisherSubject
+}
+
+# 別ビルドの配置マニフェストが混ざると署名済みでも VSTO が読み込めないため、梱包前に照合する。
 [xml]$deploymentXml = Get-Content -LiteralPath (Join-Path $vstoStagingDir 'EXLSXS.vsto') -Raw
 [xml]$applicationXml = Get-Content -LiteralPath $applicationManifest -Raw
 $rootIdentityPath = "/*[local-name()='assembly']/*[local-name()='assemblyIdentity']"
@@ -558,7 +624,21 @@ if ($actualAssemblyDigest -cne $assemblyReference.SelectSingleNode("*[local-name
 # クライアントが起動時 (PrerequisiteChecker) に署名者を検証できず、差し替えられた setup.exe が
 # UAC 昇格で実行される余地を残す。本証明書で署名しておけば起動時検証を通過する。
 $stagedSetupExe = Join-Path $vstoStagingDir "setup.exe"
-if (-not [string]::IsNullOrWhiteSpace($VelopackSignParams)) {
+if ($useSigilune) {
+    Write-Host "Authenticode-signing bootstrapper with Sigilune: $stagedSetupExe"
+    # VSTO publish は setup.exe もマニフェスト用の証明書 (ここでは使い捨て証明書) で署名する。
+    # その署名だけを置き換え、別の署名者の署名なら想定外として止める。
+    $existingSignature = Get-AuthenticodeSignature -LiteralPath $stagedSetupExe
+    $replaceSignature = $false
+    if ($null -ne $existingSignature.SignerCertificate) {
+        if ($existingSignature.SignerCertificate.Thumbprint -ne $temporaryManifestCertificate.Thumbprint) {
+            throw "Bootstrapper setup.exe has an unexpected signature: $($existingSignature.SignerCertificate.Subject)"
+        }
+        $replaceSignature = $true
+    }
+    Invoke-SigiluneSign -SigiluneExe $SigiluneExe -Path $stagedSetupExe -CertificateSubjectName $ExpectedPublisherSubject -Replace:$replaceSignature
+}
+elseif (-not [string]::IsNullOrWhiteSpace($VelopackSignParams)) {
     if (-not (Test-Path -LiteralPath $stagedSetupExe)) {
         throw "Bootstrapper setup.exe was not found for signing: $stagedSetupExe"
     }
@@ -583,6 +663,12 @@ $settingsJson = $settings | ConvertTo-Json -Depth 5
 Ensure-VelopackCli
 # 既存の正式配布物は保持し、vpkに同じ正式出力先を渡す。
 New-Item -ItemType Directory -Path $releaseDir -Force | Out-Null
+if ($DownloadPreviousRelease -and -not (Test-Path -LiteralPath (Join-Path $releaseDir "releases.$Channel.json"))) {
+    if ($UpdateSourceKind -eq 'Github') { throw '-DownloadPreviousRelease supports only an HTTP update source.' }
+    Write-Host "Downloading the latest release from $UpdateSource as the delta base"
+    vpk download http --url $UpdateSource --channel $Channel --outputDir $releaseDir --allowEmptyChannel
+    if ($LASTEXITCODE -ne 0) { throw "vpk download failed with exit code $LASTEXITCODE" }
+}
 
 # Setup.exe / Update.exe に付けるアイコン。Host 本体は csproj の ApplicationIcon で
 # 同じ app.ico を持つが、Velopack の Setup.exe には vpk pack の --icon を渡さないと付かない。
@@ -611,7 +697,13 @@ if ($Version -eq '1.0.12') {
     $vpkArgs += @('--delta', 'None')
 }
 
-if (-not [string]::IsNullOrWhiteSpace($VelopackSignParams)) {
+if ($useSigilune) {
+    # vpk はファイルごとに別プロセスで署名テンプレートを実行し、vsto\ の Microsoft 署名済み DLL も渡してくる。
+    # --skip-signed で有効な署名のあるファイルは残し (無効な署名なら失敗)、それ以外を署名する。
+    # Sigilune はログインを共有し、署名後に有効性・署名者・タイムスタンプを検証して失敗なら非0で終わる。
+    $vpkArgs += @("--signTemplate", "`"$SigiluneExe`" sign --skip-signed {{file}}")
+}
+elseif (-not [string]::IsNullOrWhiteSpace($VelopackSignParams)) {
     $vpkArgs += @("--signParams", $VelopackSignParams)
 }
 
@@ -630,6 +722,15 @@ catch {
     $packFailure = $_
 }
 finally {
+    # 使い捨てのビルド用証明書は秘密鍵ごと証明書ストアから取り除く。
+    if ($null -ne $temporaryManifestCertificate) {
+        try {
+            Remove-Item -LiteralPath "Cert:\CurrentUser\My\$($temporaryManifestCertificate.Thumbprint)" -DeleteKey -ErrorAction Stop
+        }
+        catch {
+            Write-Warning "Could not remove the temporary build certificate $($temporaryManifestCertificate.Thumbprint): $($_.Exception.Message)"
+        }
+    }
     if ($scratchCreated -and (Test-Path -LiteralPath $artifactsDir)) {
         try {
             Remove-LocalWorkItem -LiteralPath $artifactsDir -AllowedRoot $scratchParent
