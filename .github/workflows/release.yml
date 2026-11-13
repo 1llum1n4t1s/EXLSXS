@@ -44,7 +44,8 @@ jobs:
         # actions/setup-dotnet@v6.1.0
         uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73
         with:
-          # ホストの TargetFramework (net10.0 / net11.0) のどちらでもビルドできるよう両方入れる。
+          # 11.0.x はホストの TargetFramework (net11.0) 用。10.0.x は vpk CLI (net10.0 までのツール) を
+          # ロールフォワードに頼らず動かすために残す。vpk が net11.0 を同梱したら 10.0.x を外せる。
           dotnet-version: |
             10.0.x
             11.0.x
@@ -57,7 +58,8 @@ jobs:
           Write-Host "Visual Studio: $installation"
 
       - name: Sigilune を導入
-        uses: 1llum1n4t1s/Sigilune@v1
+        # 1llum1n4t1s/Sigilune@v1.1.1 (署名シークレットを扱うジョブなので、他と同じくコミット SHA で固定する)
+        uses: 1llum1n4t1s/Sigilune@b087dc7eb2e144559680d60442f198f58e031d0c
 
       - name: ビルド・署名・配信
         env:

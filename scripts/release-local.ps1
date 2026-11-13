@@ -8,7 +8,7 @@
 # EXLSXS は「VSTO アドイン (.NET Fw 4.8.1, Library) + Velopack ホスト」の 2 段構成で、
 # ビルド/パッケージングは build/pack-velopack.ps1 が一括 (VSTO publish + ClickOnce 署名 →
 # host publish → staging → vpk pack + Authenticode 署名) で担う。本スクリプトはその上に
-# プリフライト → pack 呼び出し → 署名検証 → R2 アップロード → 配信確認 → 旧版掃除 を被せる。
+# プリフライト → pack 呼び出し → 署名検証 → R2 アップロード → キャッシュパージ → 旧版掃除 を被せる。
 #
 # 前提:
 #   - Sigilune を使えること (scripts/Sigilune.Common.ps1 参照)。
@@ -75,7 +75,7 @@ function Send-ReleaseR2Object {
         default { if ($File.Name -like 'RELEASES*') { 'text/plain; charset=utf-8' } else { 'application/octet-stream' } }
     }
     $null = Publish-R2Object -AccountId $AccountId -Bucket $Bucket -FilePath $File.FullName `
-        -ApiToken $env:CLOUDFLARE_API_TOKEN -ContentType $contentType -CacheControl $cacheControl -Immutable:$immutable
+        -ApiToken $CloudflareApiToken -ContentType $contentType -CacheControl $cacheControl -Immutable:$immutable
 }
 
 $ErrorActionPreference = 'Stop'
@@ -123,7 +123,7 @@ Write-Host '== プリフライト ==' -ForegroundColor Cyan
 if (-not ${env:ProgramFiles(x86)}) { ${env:ProgramFiles(x86)} = 'C:\Program Files (x86)' }
 $vsInstallerDir = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer'
 if ($env:PATH -notlike "*$vsInstallerDir*") { $env:PATH = "$env:PATH;$vsInstallerDir" }
-# vpk (dotnet tool) は .NET 9 ランタイム要求だがローカルは 10 のみ → ロールフォワード
+# vpk (dotnet tool) は net8.0〜net10.0 向けしか同梱しないため、.NET 11 だけの環境でも動くようロールフォワードする
 $env:DOTNET_ROLL_FORWARD = 'Major'
 
 # バージョンは Directory.Build.props の <Version> から取得 (表示・確認用)。
@@ -147,13 +147,59 @@ if (-not $SkipBuild) {
 }
 
 # Cloudflare トークン (アップロード時のみ必要)。CI は環境変数、ローカルは secrets.json から読む。
+# 値はスクリプト変数で持ち、環境変数には書き戻さない。pack-velopack.ps1 の子プロセス
+# (MSBuild・NuGet 復元で動くパッケージのターゲット・vpk・dotnet) に R2 書き込みトークンを継承させないため。
+$CloudflareApiToken = $null
 if (-not $SkipUpload) {
-    if (-not $env:CLOUDFLARE_API_TOKEN) {
+    $CloudflareApiToken = $env:CLOUDFLARE_API_TOKEN
+    if (-not $CloudflareApiToken) {
         $secrets = Get-Content $SecretsPath -Raw | ConvertFrom-Json
         if (-not $secrets.cloudflare.api_token) { throw "secrets.json に cloudflare.api_token が見つかりません" }
-        $env:CLOUDFLARE_API_TOKEN = $secrets.cloudflare.api_token
+        $CloudflareApiToken = $secrets.cloudflare.api_token
     }
-    $env:CLOUDFLARE_ACCOUNT_ID = $AccountId
+}
+# CI ではワークフローがステップの環境変数として渡してくる。読み終えたら (アップロードしない場合も)
+# このプロセスの環境変数から外し、以降の子プロセス (Sigilune・MSBuild・vpk・dotnet など) へ継承させない。
+# 以降の R2 / Cloudflare API 呼び出しはすべて $CloudflareApiToken を明示して使う。
+Remove-Item -LiteralPath Env:\CLOUDFLARE_API_TOKEN -ErrorAction SilentlyContinue
+
+# 配信中の最新版がローカルの出力先に無いままアップロードすると、その版を含まない releases.*.json で
+# 配信先を上書きしてしまう (例: CI で公開した版がローカルに無い)。pack-velopack.ps1 は出力先に
+# manifest が既にあると配信元から取得しないため、ビルド前に照合して止める。
+# 出力先に manifest が無い場合は pack が配信元の最新版を取得するので照合しない (CI と同じ経路)。
+function Get-ReleaseManifestLatestFullAsset {
+    param([Parameter(Mandatory)][AllowNull()][object]$Manifest)
+    if ($null -eq $Manifest -or -not $Manifest.PSObject.Properties['Assets']) { return $null }
+    return @($Manifest.Assets) |
+        Where-Object { $_.PSObject.Properties['Type'] -and $_.Type -eq 'Full' -and $_.PSObject.Properties['FileName'] -and $_.FileName } |
+        Sort-Object { [version]$_.Version } -Descending |
+        Select-Object -First 1
+}
+
+$localManifestPath = Join-Path $ReleaseDir "releases.$Channel.json"
+if (-not $SkipUpload -and (Test-Path -LiteralPath $localManifestPath)) {
+    $remoteManifest = $null
+    $remoteManifestMissing = $false
+    try {
+        $remoteManifest = Invoke-RestMethod -Uri "$BaseUrl/releases.$Channel.json" -Headers @{ 'Cache-Control' = 'no-cache' } -TimeoutSec 30
+    }
+    catch [Microsoft.PowerShell.Commands.HttpResponseException] {
+        # 初回リリースなど、配信先に manifest が無い (404) 場合だけ照合を省く。それ以外の失敗は止める。
+        if ($_.Exception.Response.StatusCode -ne [System.Net.HttpStatusCode]::NotFound) { throw }
+        $remoteManifestMissing = $true
+    }
+    $remoteLatest = Get-ReleaseManifestLatestFullAsset -Manifest $remoteManifest
+    if (-not $remoteManifestMissing -and $null -eq $remoteLatest) {
+        # 応答は得たのに最新 Full 版を特定できない (ゲートウェイの HTML など) ときに、黙って照合を省かない。
+        throw "配信中の $BaseUrl/releases.$Channel.json から最新の Full 版を特定できませんでした。応答を確認してから再実行してください。"
+    }
+    if ($null -ne $remoteLatest) {
+        $localFileNames = @((Get-Content -LiteralPath $localManifestPath -Raw | ConvertFrom-Json).Assets | ForEach-Object { $_.FileName })
+        if ($localFileNames -notcontains $remoteLatest.FileName) {
+            throw "配信中の最新版 $($remoteLatest.FileName) がローカルの $localManifestPath にありません。このまま配信すると manifest が巻き戻るため中止します。artifacts\velopack-releases を退避して空にすると、pack が配信元の最新版を取得して差分の基準にします。"
+        }
+        Write-Host "配信中の最新版 $($remoteLatest.FileName) がローカルの manifest にあることを確認しました。"
+    }
 }
 
 # ---- 1. ビルド + 署名付き Velopack パッケージング (pack-velopack.ps1 に委譲) ----
@@ -287,9 +333,9 @@ Write-Host "✅ R2 アップロード完了: $uploaded ファイル"
 # 固定名ファイル (Setup.exe / Portable.zip / RELEASES / releases.*.json / assets.*.json) は
 # 毎リリースで中身が変わるのに URL が不変。CDN エッジが旧版を Cache-Control の max-age 分保持するため、
 # パージしないと新規ダウンロード・自動更新が旧バージョンを掴む。アップロード直後に該当 URL をパージして
-# 伝播を確定する。バージョン付き nupkg は URL が一意 (旧キャッシュなし) のためパージ不要。
+# キャッシュ削除を要求する。バージョン付き nupkg は URL が一意 (旧キャッシュなし) のためパージ不要。
 Write-Host '== Cloudflare キャッシュパージ ==' -ForegroundColor Cyan
-$cfHeaders = @{ Authorization = "Bearer $($env:CLOUDFLARE_API_TOKEN)" }
+$cfHeaders = @{ Authorization = "Bearer $CloudflareApiToken" }
 $fixedFiles = @($files | Where-Object { $_.Name -notlike '*.nupkg' })
 foreach ($distributionBaseUrl in $DistributionBaseUrls) {
     $zoneName = ([uri]$distributionBaseUrl).Host -replace '^[^.]+\.', ''   # <sub>.example.com → example.com (apex)
@@ -309,37 +355,7 @@ foreach ($distributionBaseUrl in $DistributionBaseUrls) {
     }
 }
 
-# ---- 4. 配信確認 (manifest 完全一致リトライ) ----
-# 単純な HTTP 200 だと CDN/edge が古い manifest を返している間に cleanup が走り、
-# 旧 manifest を掴んだクライアントが直後に消える nupkg を取りに行く race がある。
-# 新旧両ホストの固定 URL 自体がローカル manifest と完全一致するまでリトライしてから cleanup へ進む。
-Write-Host '== 配信確認 (manifest 伝播待機) ==' -ForegroundColor Cyan
-$localManifest = Get-Content (Join-Path $ReleaseDir "releases.$Channel.json") -Raw |
-    ConvertFrom-Json | ConvertTo-Json -Depth 100 -Compress
-$maxAttempts = 18
-foreach ($distributionBaseUrl in $DistributionBaseUrls) {
-    $url = "$distributionBaseUrl/releases.$Channel.json"
-    $matched = $false
-    for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
-        # cache-busting や no-cache を付けると固定 URL の stale edge を検証できないため、そのまま取得する。
-        $resp = Invoke-WebRequest -Uri $url -TimeoutSec 30
-        $raw = $resp.Content
-        if ($raw -is [byte[]]) { $raw = [System.Text.Encoding]::UTF8.GetString($raw) }
-        $remoteManifest = $raw | ConvertFrom-Json | ConvertTo-Json -Depth 100 -Compress
-        if ($localManifest -eq $remoteManifest) {
-            Write-Host "  ✅ $url がローカル manifest と一致 (attempt $attempt)"
-            $matched = $true
-            break
-        }
-        Write-Host "  ⚠️ remote manifest がまだ古い (attempt $attempt / $maxAttempts)、5 秒待機..."
-        Start-Sleep -Seconds 5
-    }
-    if (-not $matched) {
-        throw "remote manifest が $($maxAttempts * 5) 秒以内にローカルと一致しませんでした。race 回避のため cleanup を中止します: $url"
-    }
-}
-
-# ---- 5. 旧バージョン nupkg のクリーンアップ (世代保持戦略) ----
+# ---- 4. 旧バージョン nupkg のクリーンアップ (世代保持戦略) ----
 # 最新 manifest が指す nupkg に加え、R2 上の nupkg を新しい順に $KeepGenerations 世代保持する。
 # 壊れた版を配信したとき 1 つ前の安定版へロールバックできる戻り道を残すため、全削除はしない。
 # 固定名ファイル (Setup.exe / RELEASES* / assets.*.json / releases.*.json) は対象外で安全。
@@ -356,7 +372,7 @@ foreach ($m in $manifests) {
 Write-Host "  保持対象 nupkg: $($keep.Count) 件"
 
 $api = "https://api.cloudflare.com/client/v4/accounts/$AccountId/r2/buckets/$Bucket"
-$headers = @{ Authorization = "Bearer $($env:CLOUDFLARE_API_TOKEN)" }
+$headers = @{ Authorization = "Bearer $CloudflareApiToken" }
 
 $allKeys = [System.Collections.Generic.List[string]]::new()
 $cursor = ''
@@ -374,10 +390,9 @@ while ($true) {
 }
 
 # R2 上のバージョン付きファイルを世代ごとに分類し、新しい順に $KeepGenerations 世代を保持する。
-# ⚠️ 旧実装は '*.nupkg' だけを対象にしていたため、バージョン付きの配布物 (zip / deb / rpm /
-#    AppImage 等) が R2 に永久に溜まっていた (Ferry で 351 個 7.2GB = 含有枠 10GB の 72%)。
-#    固定ファイル名 (Setup.exe / Portable.zip / RELEASES* / releases.*.json) は
-#    バージョン文字列を含まないので対象外 = 安全。
+# '*.nupkg' に限らず、バージョン文字列を含むキーはすべて世代の対象にする (取り残しを防ぐため)。
+# 固定ファイル名 (Setup.exe / Portable.zip / RELEASES* / releases.*.json) は
+# バージョン文字列を含まないので対象外 = 安全。
 $versionPattern = '(\d+\.\d+\.\d+)'
 $versionedKeys = $allKeys | Where-Object { [regex]::IsMatch($_, $versionPattern) }
 $versionsOnR2 = $versionedKeys |

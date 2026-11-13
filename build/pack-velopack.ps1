@@ -102,6 +102,11 @@ $ErrorActionPreference = "Stop"
 $root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $vstoProject = Join-Path $root "EXLSXS\EXLSXS.csproj"
 $hostProject = Join-Path $root "EXLSXS.Host\EXLSXS.Host.csproj"
+# vpk CLI は Velopack ライブラリ (PackageReference) と同じ、動作確認済みの安定版へ固定する。
+# 無固定取得は署名・パッケージングを担う最特権ツールが NuGet 侵害や予期せぬ最新版で
+# 差し替わるサプライチェーン穴になる。更新時はライブラリとこの値を同じ batch で上げ、
+# pack→配信→クライアント更新まで検証してから確定する。
+$vpkVersion = "1.2.161"
 # 中間出力は実行ごとの外部Temp、配布物は従来の正式保存先に置く。
 $taskId = [Guid]::NewGuid().ToString('N')
 $scratchParent = [IO.Path]::GetFullPath((Join-Path ([IO.Path]::GetTempPath()) 'Codex\EXLSXS'))
@@ -267,18 +272,27 @@ function Invoke-SignTool {
     }
 }
 
+# AGENTS.md の「Velopack ライブラリと vpk CLI は同じ安定版に揃える」を機械的に守る。
+# Dependabot はホスト csproj の Velopack だけを上げ、$vpkVersion は追随しないため、
+# 片方だけ上がった状態で長いビルドを始める前に止める。
+function Assert-VelopackVersionsMatch {
+    $hostXml = [xml](Get-Content -LiteralPath $hostProject -Raw)
+    $libraryVersions = @($hostXml.SelectNodes('//PackageReference[@Include="Velopack"]') | ForEach-Object { $_.GetAttribute('Version') })
+    if ($libraryVersions.Count -ne 1 -or [string]::IsNullOrWhiteSpace($libraryVersions[0])) {
+        throw "Velopack PackageReference version could not be read from $hostProject."
+    }
+    if ($libraryVersions[0] -ne $vpkVersion) {
+        throw "Velopack library ($($libraryVersions[0]), $hostProject) and vpk CLI (`$vpkVersion = $vpkVersion, build/pack-velopack.ps1) must be updated together."
+    }
+}
+
 function Ensure-VelopackCli {
     $toolsPath = Join-Path $env:USERPROFILE ".dotnet\tools"
     if ((Test-Path -LiteralPath $toolsPath) -and ($env:PATH -notlike "*$toolsPath*")) {
         $env:PATH = "$env:PATH;$toolsPath"
     }
 
-    # vpk CLI は Velopack ライブラリ (PackageReference) と同じ、動作確認済みの安定版へ固定する。
-    # 無固定取得は署名・パッケージングを担う最特権ツールが NuGet 侵害や予期せぬ最新版で
-    # 差し替わるサプライチェーン穴になる。更新時はライブラリとこの値を同じ batch で上げ、
-    # pack→配信→クライアント更新まで検証してから確定する。
-    $vpkVersion = "1.2.161"
-
+    # 固定版はスクリプト冒頭の $vpkVersion (Assert-VelopackVersionsMatch で照合済み) を使う。
     $installedVersion = $null
     $command = Get-Command vpk -ErrorAction SilentlyContinue
     if ($command -ne $null) {
@@ -360,7 +374,9 @@ $scratchCreated = $false
 $temporaryManifestCertificate = $null
 $packFailure = $null
 $cleanupFailure = $null
+$registrationCleanupFailure = $null
 try {
+    Assert-VelopackVersionsMatch
     Assert-ExternalOutputRoot -Path $artifactsDir
     Assert-NoReparseAncestor -Path $releaseDir
     if (Test-Path -LiteralPath $artifactsDir) { throw "Intermediate output already exists: $artifactsDir" }
@@ -474,6 +490,109 @@ $visualStudioVersion = Get-VisualStudioVersion
 $visualStudioVersionArgs = @(if ($visualStudioVersion) { "/p:VisualStudioVersion=$visualStudioVersion" })
 $vstoPublishDirWithSlash = $vstoPublishDir.TrimEnd('\') + '\'
 
+# VSTO の Rebuild は PrepareForRun → RegisterOfficeAddin で HKCU の Excel アドイン登録を
+# 出力先 ($vstoBuildDir = 実行ごとの一時フォルダー) の .vsto へ書き換えてしまう。一時フォルダーは
+# パック後に削除されるため、そのままだと開発機の Excel 起動時に「EXLSXS.vsto のダウンロードに
+# 失敗しました」となる。ビルド前の登録状態を退避し、MSBuild 実行後に必ず元へ戻す。
+$addInRegistryPath = 'HKCU:\Software\Microsoft\Office\Excel\Addins\EXLSXS'
+
+function Save-AddInRegistration {
+    if (-not (Test-Path -LiteralPath $addInRegistryPath)) { return $null }
+    $key = Get-Item -LiteralPath $addInRegistryPath
+    $values = @{}
+    foreach ($name in $key.GetValueNames()) {
+        $values[$name] = @{ Value = $key.GetValue($name, $null, 'DoNotExpandEnvironmentNames'); Kind = $key.GetValueKind($name) }
+    }
+    return $values
+}
+
+function Restore-AddInRegistration {
+    param([AllowNull()][hashtable]$Snapshot)
+    if ($null -eq $Snapshot) {
+        # ビルド前に登録が無かった場合は、MSBuild が作ったキーを取り除く（開発機を汚さない）。
+        if (Test-Path -LiteralPath $addInRegistryPath) {
+            Remove-Item -LiteralPath $addInRegistryPath -Recurse -Force -ErrorAction Stop
+        }
+        return
+    }
+    if (-not (Test-Path -LiteralPath $addInRegistryPath)) {
+        New-Item -Path $addInRegistryPath -Force | Out-Null
+    }
+    $key = Get-Item -LiteralPath $addInRegistryPath
+    # MSBuild が追加した値を消し、退避した値を種類ごと書き戻す。
+    foreach ($name in $key.GetValueNames()) {
+        if (-not $Snapshot.ContainsKey($name)) {
+            Remove-ItemProperty -LiteralPath $addInRegistryPath -Name $name -ErrorAction Stop
+        }
+    }
+    foreach ($name in $Snapshot.Keys) {
+        $entry = $Snapshot[$name]
+        New-ItemProperty -LiteralPath $addInRegistryPath -Name $name -Value $entry.Value -PropertyType $entry.Kind -Force | Out-Null
+    }
+}
+
+# VisualStudioForApplicationsBuild ターゲットは SetInclusionListEntry で、ビルド出力の .vsto を
+# HKCU の VSTO 信頼リスト (Security\Inclusion\<GUID>) に無条件で追加する。pack は実行ごとに
+# 使い捨て証明書と一時フォルダーを使うため、そのままでは存在しないパスの信頼項目が毎回溜まる。
+# ビルド前に無かったサブキーのうち、Url がこの実行の .vsto に完全一致するものだけを消す
+# (開発用の bin\Debug やインストール版の項目、ビルド前からある項目には触れない)。
+# 同じビルドで SolutionMetadata にも「.vsto の URL = {GUID}」の値と {GUID} サブキーが作られる
+# (実機の pack 前後比較で確認) ため、同じ条件で一緒に消す。
+$vstoInclusionRegistryPath = 'HKCU:\Software\Microsoft\VSTO\Security\Inclusion'
+$vstoSolutionMetadataRegistryPath = 'HKCU:\Software\Microsoft\VSTO\SolutionMetadata'
+
+function Test-VstoSolutionMetadataExists {
+    param([Parameter(Mandatory = $true)][string]$ManifestUrl)
+    if (-not (Test-Path -LiteralPath $vstoSolutionMetadataRegistryPath)) { return $false }
+    return @((Get-Item -LiteralPath $vstoSolutionMetadataRegistryPath).GetValueNames()) -contains $ManifestUrl
+}
+
+function Remove-BuildVstoSolutionMetadata {
+    param([Parameter(Mandatory = $true)][string]$ManifestUrl)
+    if (-not (Test-Path -LiteralPath $vstoSolutionMetadataRegistryPath)) { return }
+    $metadataKey = Get-Item -LiteralPath $vstoSolutionMetadataRegistryPath
+    $valueName = @($metadataKey.GetValueNames()) | Where-Object { $_.Equals($ManifestUrl, [StringComparison]::OrdinalIgnoreCase) } | Select-Object -First 1
+    if ($null -eq $valueName) { return }
+    $solutionId = $metadataKey.GetValue($valueName)
+    Remove-ItemProperty -LiteralPath $vstoSolutionMetadataRegistryPath -Name $valueName -ErrorAction Stop
+    # GUID 形式の値だけを対象にし、想定外の値でサブキーを取り違えない。
+    if ($solutionId -is [string] -and $solutionId -match '^\{[0-9A-Fa-f-]{36}\}$') {
+        $solutionKeyPath = Join-Path $vstoSolutionMetadataRegistryPath $solutionId
+        if (Test-Path -LiteralPath $solutionKeyPath) {
+            Remove-Item -LiteralPath $solutionKeyPath -Recurse -Force -ErrorAction Stop
+        }
+    }
+}
+
+function Get-VstoInclusionKeyNames {
+    if (-not (Test-Path -LiteralPath $vstoInclusionRegistryPath)) { return @() }
+    return @(Get-ChildItem -LiteralPath $vstoInclusionRegistryPath | ForEach-Object { $_.PSChildName })
+}
+
+function Remove-BuildVstoInclusionEntries {
+    param(
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()][string[]]$ExistingKeyNames,
+        [Parameter(Mandatory = $true)][string]$ManifestUrl
+    )
+    if (-not (Test-Path -LiteralPath $vstoInclusionRegistryPath)) { return }
+    foreach ($subKey in @(Get-ChildItem -LiteralPath $vstoInclusionRegistryPath)) {
+        if ($ExistingKeyNames -contains $subKey.PSChildName) { continue }
+        $url = $subKey.GetValue('Url')
+        if ($url -is [string] -and $url.Equals($ManifestUrl, [StringComparison]::OrdinalIgnoreCase)) {
+            Remove-Item -LiteralPath $subKey.PSPath -Recurse -Force -ErrorAction Stop
+        }
+    }
+}
+
+$addInRegistrationSnapshot = Save-AddInRegistration
+# 関数から返した空配列は呼び出し側で $null になる (まっさらな CI ランナー等で Inclusion が空のとき)。
+# $null は [string[]] の必須引数に束縛できないため、@() で包んで空配列のまま渡す。
+$vstoInclusionKeyNamesBeforeBuild = @(Get-VstoInclusionKeyNames)
+$vstoBuildManifestUrl = ([Uri](Join-Path $vstoBuildDir 'EXLSXS.vsto')).AbsoluteUri
+# 実行ごとに新しい一時フォルダーなので通常は false。ビルド前からあれば触れない。
+$vstoSolutionMetadataExistedBeforeBuild = Test-VstoSolutionMetadataExists -ManifestUrl $vstoBuildManifestUrl
+try {
+
 # 1. VSTO アセンブリをビルドする (publish はまだ行わない)。
 $buildArgs = @(
     $vstoProject,
@@ -529,6 +648,35 @@ $publishArgs = @(
 & $msbuild @publishArgs
 if ($LASTEXITCODE -ne 0) {
     throw "VSTO publish failed with exit code $LASTEXITCODE"
+}
+
+}
+finally {
+    # 成功・失敗どちらでも、一時フォルダーを指す登録・信頼項目を残さない。
+    # ここで throw するとビルド失敗の原因を上書きしてしまうため、失敗は記録して最後にまとめて報告する。
+    try {
+        Restore-AddInRegistration -Snapshot $addInRegistrationSnapshot
+    }
+    catch {
+        $registrationCleanupFailure = $_
+        Write-Warning "Could not restore the Excel add-in registration ($addInRegistryPath): $($_.Exception.Message)"
+    }
+    try {
+        Remove-BuildVstoInclusionEntries -ExistingKeyNames $vstoInclusionKeyNamesBeforeBuild -ManifestUrl $vstoBuildManifestUrl
+    }
+    catch {
+        if ($null -eq $registrationCleanupFailure) { $registrationCleanupFailure = $_ }
+        Write-Warning "Could not remove the build's VSTO inclusion entry ($vstoBuildManifestUrl): $($_.Exception.Message)"
+    }
+    if (-not $vstoSolutionMetadataExistedBeforeBuild) {
+        try {
+            Remove-BuildVstoSolutionMetadata -ManifestUrl $vstoBuildManifestUrl
+        }
+        catch {
+            if ($null -eq $registrationCleanupFailure) { $registrationCleanupFailure = $_ }
+            Write-Warning "Could not remove the build's VSTO solution metadata ($vstoBuildManifestUrl): $($_.Exception.Message)"
+        }
+    }
 }
 
 New-Item -ItemType Directory -Path $hostPublishDir -ErrorAction Stop | Out-Null
@@ -745,6 +893,9 @@ if ($null -ne $cleanupFailure) {
     throw "Intermediate cleanup failed; inspect the retained source. Source: $artifactsDir; Reason: $($cleanupFailure.Exception.Message).$packMessage"
 }
 if ($null -ne $packFailure) { throw $packFailure }
+if ($null -ne $registrationCleanupFailure) {
+    throw "Packaging succeeded, but the developer machine's VSTO registration could not be restored: $($registrationCleanupFailure.Exception.Message)"
+}
 Write-Host "Velopack artifacts created:" -ForegroundColor Green
 Get-ChildItem -LiteralPath $releaseDir | ForEach-Object {
     Write-Host "  $($_.FullName)"

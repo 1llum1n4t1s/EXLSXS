@@ -29,10 +29,16 @@ jobs:
         shell: pwsh
         run: |
           & (Join-Path $env:GITHUB_WORKSPACE 'tests/R2Transfer/Run.ps1') -WorkRoot (Join-Path $env:RUNNER_TEMP 'r2-transfer-check')
+      - name: Verify Velopack library and vpk CLI versions match
+        run: |
+          # Dependabot はホスト csproj の Velopack だけを上げるため、pack 用の vpk 固定版と揃っているかをここで止める。
+          $library = ([xml](Get-Content -LiteralPath EXLSXS.Host/EXLSXS.Host.csproj -Raw)).SelectSingleNode('//PackageReference[@Include="Velopack"]').GetAttribute('Version')
+          $cli = [regex]::Match((Get-Content -LiteralPath build/pack-velopack.ps1 -Raw), '(?m)^\$vpkVersion\s*=\s*"([^"]+)"').Groups[1].Value
+          if ([string]::IsNullOrWhiteSpace($library) -or $library -ne $cli) { throw "Velopack library ($library) and vpk CLI ($cli) must be updated together." }
       - name: Setup .NET
-        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
         with:
-          dotnet-version: 10.0.x
+          dotnet-version: 11.0.x
       - name: Restore
         run: |
           dotnet restore EXLSXS.Host/EXLSXS.Host.csproj
