@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
+using System.Windows.Forms;
 using Microsoft.Office.Interop.Excel;
 
 namespace EXLSXS
@@ -289,6 +290,56 @@ namespace EXLSXS
 				throw new InvalidOperationException(
 					$"{failedWorksheets.Count} 枚のシートを仕上げできませんでした。対象: {string.Join(", ", failedWorksheets.ToArray())}");
 			}
+		}
+
+		// Excel の「ファイルを開く」→「開いて修復する」と同等の処理。
+		// Excel 標準 UI は内部で Workbooks.Open の CorruptLoad 引数を使う修復モードで開くため、
+		// ここでも同じ引数を渡して Excel 自身の修復処理に任せる (アドイン側で XML を直したりはしない)。
+		//   xlRepairFile  : 読めない部品を直す/捨てながら開く (標準 UI の「修復」)
+		//   xlExtractData : 修復できないときにセルの値・数式だけを取り出す (標準 UI の「データの抽出」)
+		// 修復結果の一覧 (修復ログ) は Excel 自身が表示するので、DisplayAlerts は変更しない。
+		internal void DoOpenAndRepair()
+		{
+			Microsoft.Office.Interop.Excel.Application application = this.Application;
+
+			// Excel 自身のファイル選択ダイアログを使う (Excel の既定フォルダー・最近使った場所と一貫させるため)。
+			// キャンセル時は string ではなく false (bool) が返る。
+			object selected = application.GetOpenFilename(
+				"Excel ファイル (*.xl*),*.xl*,すべてのファイル (*.*),*.*",
+				1,
+				"開いて修復するブックを選択",
+				Missing.Value,
+				false);
+			if (!(selected is string path) || string.IsNullOrEmpty(path))
+			{
+				return;
+			}
+
+			// 標準 UI と同じく「修復」か「データの抽出」かを選ばせる。
+			DialogResult choice = MessageBox.Show(
+				$"「{System.IO.Path.GetFileName(path)}」を修復して開きます。\r\n\r\n" +
+				"[はい] 修復: できるだけ多くのデータを復元します。\r\n" +
+				"[いいえ] データの抽出: 修復できないときに、セルの値と数式だけを取り出します。",
+				this.AssemblyTitle,
+				MessageBoxButtons.YesNoCancel,
+				MessageBoxIcon.Question,
+				MessageBoxDefaultButton.Button1);
+			XlCorruptLoad corruptLoad;
+			switch (choice)
+			{
+				case DialogResult.Yes:
+					corruptLoad = XlCorruptLoad.xlRepairFile;
+					break;
+				case DialogResult.No:
+					corruptLoad = XlCorruptLoad.xlExtractData;
+					break;
+				default:
+					return;
+			}
+
+			// 修復したブックは元ファイルを書き換えずに開くだけ。保存先は利用者が決める (別名保存が安全)。
+			// EmbedInteropTypes=True でも、名前付き引数の省略は COM 相互運用としてコンパイラが Missing を補う。
+			application.Workbooks.Open(path, CorruptLoad: corruptLoad);
 		}
 
 		// ブックの一番左 (先頭) の表示シートをアクティブにする。

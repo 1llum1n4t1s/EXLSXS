@@ -55,8 +55,11 @@ namespace EXLSXS
 			this.NumberFormatRowBox = this.Factory.CreateRibbonBox();
 			this.FormatStackBox = this.Factory.CreateRibbonBox();
 			this.LocalBuildLabel = this.Factory.CreateRibbonLabel();
+			this.GroupFile = this.Factory.CreateRibbonGroup();
+			this.OpenAndRepair = this.Factory.CreateRibbonButton();
 			this.TabEXLSXS.SuspendLayout();
 			this.GroupEXLSXS.SuspendLayout();
+			this.GroupFile.SuspendLayout();
 			this.FontRowBox.SuspendLayout();
 			this.StackBox.SuspendLayout();
 			this.GridRowBox.SuspendLayout();
@@ -67,6 +70,7 @@ namespace EXLSXS
 			// TabEXLSXS
 			//
 			this.TabEXLSXS.Groups.Add(this.GroupEXLSXS);
+			this.TabEXLSXS.Groups.Add(this.GroupFile);
 			this.TabEXLSXS.Label = "EXLSXS";
 			this.TabEXLSXS.Name = "TabEXLSXS";
 			// 
@@ -220,6 +224,23 @@ namespace EXLSXS
 			this.LocalBuildLabel.SuperTip = "この EXLSXS はローカルでビルドされたバージョンです。Cloudflare R2 で配信されている正式なインストール版ではありません。";
 			this.LocalBuildLabel.Visible = false;
 			//
+			// GroupFile
+			//
+			this.GroupFile.Items.Add(this.OpenAndRepair);
+			this.GroupFile.Label = "ファイル";
+			this.GroupFile.Name = "GroupFile";
+			//
+			// OpenAndRepair
+			//
+			this.OpenAndRepair.ControlSize = Microsoft.Office.Core.RibbonControlSize.RibbonControlSizeLarge;
+			this.OpenAndRepair.Label = "開いて修復";
+			this.OpenAndRepair.Name = "OpenAndRepair";
+			this.OpenAndRepair.OfficeImageId = "FileOpen";
+			this.OpenAndRepair.ScreenTip = "開いて修復";
+			this.OpenAndRepair.ShowImage = true;
+			this.OpenAndRepair.SuperTip = "壊れたブックを選び、Excel の「開いて修復する」と同じ処理で開きます。修復できない場合は、セルの値や数式だけを抽出して開くこともできます。";
+			this.OpenAndRepair.Click += new Microsoft.Office.Tools.Ribbon.RibbonControlEventHandler(this.OpenAndRepair_Click);
+			//
 			// MyRibbon
 			//
 			this.Name = "MyRibbon";
@@ -230,6 +251,8 @@ namespace EXLSXS
 			this.TabEXLSXS.PerformLayout();
 			this.GroupEXLSXS.ResumeLayout(false);
 			this.GroupEXLSXS.PerformLayout();
+			this.GroupFile.ResumeLayout(false);
+			this.GroupFile.PerformLayout();
 			this.FontRowBox.ResumeLayout(false);
 			this.FontRowBox.PerformLayout();
 			this.StackBox.ResumeLayout(false);
@@ -264,6 +287,8 @@ namespace EXLSXS
 		internal Microsoft.Office.Tools.Ribbon.RibbonBox NumberFormatRowBox;
 		internal Microsoft.Office.Tools.Ribbon.RibbonBox FormatStackBox;
 		internal Microsoft.Office.Tools.Ribbon.RibbonLabel LocalBuildLabel;
+		internal Microsoft.Office.Tools.Ribbon.RibbonGroup GroupFile;
+		internal Microsoft.Office.Tools.Ribbon.RibbonButton OpenAndRepair;
 	}
 
 	partial class ThisRibbonCollection

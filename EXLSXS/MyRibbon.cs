@@ -169,6 +169,19 @@ namespace EXLSXS
 			}
 		}
 
+		// 「開いて修復」はブックが開いていなくても使えるため、RefreshStatus では無効化しない。
+		private void OpenAndRepair_Click(object sender, RibbonControlEventArgs e)
+		{
+			try
+			{
+				Globals.ThisAddIn.DoOpenAndRepair();
+			}
+			catch (Exception ex)
+			{
+				UIHelper.ShowErrorDialog(ex);
+			}
+		}
+
 		private void SetupFontBox()
 		{
 			// StandardFont の取得は COM 往復で失敗しうるため、重いプレビュー画像生成ループの前に
