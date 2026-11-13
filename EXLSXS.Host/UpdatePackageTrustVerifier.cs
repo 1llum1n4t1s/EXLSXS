@@ -110,9 +110,25 @@ internal static class UpdatePackageTrustVerifier
             Directory.CreateDirectory(tempDir);
             using var archive = ZipFile.OpenRead(packagePath);
 
+            // .NET の ZipArchive と Update.exe の zip クレートが、同じエントリを同じ名前で読むことを先に確かめる。
+            // (Info-ZIP Unicode Path 拡張フィールドは .NET では無視され、zip クレートでは名前を置き換える)
+            if (!ZipEntryNameConsistency.Verify(packagePath, archive.Entries.Select(entry => entry.FullName).ToList(), out message))
+            {
+                return false;
+            }
+
             foreach (var entry in archive.Entries)
             {
                 var normalizedName = NormalizeEntryName(entry.FullName);
+                // Update.exe が別の場所・別名・シンボリックリンクとして書き出しうるエントリ名は、
+                // ここでは「PE ではない」と判定されて署名検査を素通りしうる。正規のパッケージには現れない名前なので、
+                // PE かどうかに関係なくパッケージごと拒否する (判定は正規化前の生の名前で行う)。
+                if (HasAmbiguousWindowsEntryName(entry.FullName))
+                {
+                    message = $"Update package entry name is not allowed on Windows: '{entry.FullName}'.";
+                    return false;
+                }
+
                 if (!IsPortableExecutableEntry(normalizedName))
                 {
                     continue;
@@ -336,7 +352,11 @@ internal static class UpdatePackageTrustVerifier
         {
             using var stream = settingsEntries[0].Open();
             using var document = JsonDocument.Parse(stream);
-            if (!document.RootElement.TryGetProperty("Update", out var update)
+            // ルートや Update がオブジェクトでないと TryGetProperty は例外を投げる。
+            // 例外ではなく「不完全な設定」として扱い、結果を Untrusted にそろえる (パッケージは拒否・削除される)。
+            if (document.RootElement.ValueKind != JsonValueKind.Object
+                || !document.RootElement.TryGetProperty("Update", out var update)
+                || update.ValueKind != JsonValueKind.Object
                 || !update.TryGetProperty("Source", out var sourceElement)
                 || sourceElement.ValueKind != JsonValueKind.String
                 || !update.TryGetProperty("SourceKind", out var sourceKindElement)
@@ -380,6 +400,11 @@ internal static class UpdatePackageTrustVerifier
             message = $"Packaged publisher trust configuration is invalid JSON: {ex.Message}";
             return false;
         }
+        catch (InvalidDataException ex)
+        {
+            message = $"Packaged publisher trust configuration could not be read from the archive: {ex.Message}";
+            return false;
+        }
     }
 
     internal static bool IsPackagedUpdateConfigurationAllowed(
@@ -393,6 +418,8 @@ internal static class UpdatePackageTrustVerifier
         if (!Uri.TryCreate(source, UriKind.Absolute, out var sourceUri)
             || !string.Equals(sourceUri.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase)
             || !AllowedPackagedUpdateHosts.Contains(sourceUri.Host)
+            // 許可するのは既定の HTTPS ポート (443) だけ。同じホストの別ポートは別サービスでありうる。
+            || !sourceUri.IsDefaultPort
             || !string.IsNullOrEmpty(sourceUri.UserInfo)
             || !string.IsNullOrEmpty(sourceUri.Query)
             || !string.IsNullOrEmpty(sourceUri.Fragment)
@@ -470,6 +497,51 @@ internal static class UpdatePackageTrustVerifier
             || normalized.EndsWith(".dll", StringComparison.OrdinalIgnoreCase)
             || normalized.EndsWith(".exe.deploy", StringComparison.OrdinalIgnoreCase)
             || normalized.EndsWith(".dll.deploy", StringComparison.OrdinalIgnoreCase);
+    }
+
+    // Velopack の Update.exe (Windows 適用は lib-rust/src/bundle.rs の extract_lib_contents_to_path) が
+    // この検証と別の場所・別の種類のファイルとして書き出しうる、生のエントリ名か。次を拒否する:
+    //   - 先頭が '/' または '\' (lib\app\ を取り除いた残りがルート付きパスになり、インストール先の外へ書かれる)
+    //   - 末尾以外の空のパス要素 ("lib/app//x" も同じくルート付きパスになりうる)
+    //   - 末尾がドットまたは空白の要素 ("coreclr.dll." は Win32 の正規化で coreclr.dll として作られる。".." も含む)
+    //   - ファイル名に使えない文字 (':' による "coreclr.dll::$DATA" などのストリーム指定、制御文字、<>"|?* )
+    //   - ".__symlink" 終わり (Update.exe は内容が指す先へのシンボリックリンクとして作る。検証側では中身を追えない)
+    // 末尾の空要素 (ディレクトリエントリの '/') だけは許可する。
+    internal static bool HasAmbiguousWindowsEntryName(string entryName)
+    {
+        if (string.IsNullOrEmpty(entryName))
+        {
+            return true;
+        }
+
+        var name = entryName.Replace('\\', '/');
+        if (name.StartsWith('/') || name.EndsWith("__symlink", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        var invalidChars = Path.GetInvalidFileNameChars();
+        var segments = name.Split('/');
+        for (var i = 0; i < segments.Length; i++)
+        {
+            var segment = segments[i];
+            if (segment.Length == 0)
+            {
+                if (i == segments.Length - 1)
+                {
+                    continue;
+                }
+
+                return true;
+            }
+
+            if (segment.EndsWith('.') || segment.EndsWith(' ') || segment.IndexOfAny(invalidChars) >= 0)
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private static bool IsMicrosoftPlatformCertificate(X509Certificate2 certificate)

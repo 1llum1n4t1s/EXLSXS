@@ -39,9 +39,13 @@ internal static class UpdateChecker
             ?? throw new InvalidOperationException("Velopack updater path is not available.");
     }
 
-    public static async Task<CheckResult> CheckAndDownloadAsync(
-        IProgress<string>? statusProgress = null,
-        CancellationToken cancellationToken = default)
+    // Velopack の DownloadUpdatesAsync が検証前に updater を上書きしないよう、書き込み共有を拒否した
+    // 読み取りハンドルを開く。呼び出し側は検証が終わるまで保持し、検証済み updater を配置する前に必ず閉じること
+    // (TryInstallVerifiedUpdater が同じパスへ File.Move で置き換えるため)。
+    internal static FileStream OpenUpdaterWriteDenyHandle(string updaterPath)
+        => new(updaterPath, FileMode.Open, FileAccess.Read, FileShare.Read);
+
+    public static async Task<CheckResult> CheckAndDownloadAsync()
     {
         try
         {
@@ -60,13 +64,12 @@ internal static class UpdateChecker
             }
 
             Logger.Log($"Checking updates from '{settings.Source}' on channel '{settings.Channel}'.");
-            statusProgress?.Report("Checking for updates.");
 
             UpdateInfo? updateInfo;
             try
             {
                 updateInfo = await updateManager.CheckForUpdatesAsync()
-                    .WaitAsync(TimeSpan.FromMilliseconds(CheckTimeoutMs), cancellationToken);
+                    .WaitAsync(TimeSpan.FromMilliseconds(CheckTimeoutMs));
             }
             catch (TimeoutException)
             {
@@ -81,21 +84,19 @@ internal static class UpdateChecker
             }
 
             Logger.Log("Update found. Downloading update.");
-            statusProgress?.Report("Downloading update.");
 
-            using var downloadCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            downloadCts.CancelAfter(DownloadTimeout);
+            using var downloadCts = new CancellationTokenSource(DownloadTimeout);
             UpdatePackageTrustVerifier.VerifiedUpdatePackage? verifiedPackage;
             var updaterPath = updateManager.UpdaterPath;
-            using (new FileStream(updaterPath, FileMode.Open, FileAccess.Read, FileShare.Read))
+            // using var にしないこと: 下の TryInstallVerifiedUpdater の前にハンドルを閉じる必要がある。
+            using (OpenUpdaterWriteDenyHandle(updaterPath))
             {
-                // Velopack 1.2.0 は DownloadUpdatesAsync の finally で、パッケージ内 Squirrel.exe を
-                // 検証前に Update.exe へ展開する。書き込み共有を拒否したハンドルを保持し、
+                // Velopack (1.2.0〜参照中の 1.2.161 で確認) は DownloadUpdatesAsync の finally で、
+                // パッケージ内 Squirrel.exe を検証前に Update.exe へ展開する。書き込み共有を拒否したハンドルを保持し、
                 // 未信頼パッケージが updater を先に差し替える経路を閉じる。
                 await updateManager.DownloadUpdatesAsync(updateInfo, null, downloadCts.Token);
 
                 Logger.Log("Update download completed.");
-                statusProgress?.Report("Verifying update publisher.");
                 if (!UpdatePackageTrustVerifier.Verify(
                         updateInfo,
                         settings,
@@ -120,14 +121,11 @@ internal static class UpdateChecker
 
             return new CheckResult(UpdateResult.Downloaded, updateInfo, updateManager, "Update downloaded.");
         }
-        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        // 外部からのキャンセル手段は持たないため、ここに来るキャンセルはダウンロードのタイムアウト由来。
+        catch (OperationCanceledException)
         {
             Logger.Log("Update download timed out.", LogLevel.Warning);
             return new CheckResult(UpdateResult.Error, null, null, "Update download timed out.");
-        }
-        catch (OperationCanceledException)
-        {
-            throw;
         }
         catch (Exception ex)
         {

@@ -36,7 +36,6 @@ public class UpdatePackageTrustVerifierTests
     [InlineData("lib/app/EXLSXS.Host.dll", true)]
     [InlineData("lib/app/vsto/EXLSXS.dll.deploy", true)]
     [InlineData("lib/app/appsettings.json", false)]
-    [InlineData("lib/app/EXLSXS.vsto", false)]
     public void IsPortableExecutableEntry_DetectsExecutablePayloads(string input, bool expected)
     {
         Assert.Equal(expected, UpdatePackageTrustVerifier.IsPortableExecutableEntry(input));
@@ -102,16 +101,6 @@ public class UpdatePackageTrustVerifierTests
     }
 
     [Fact]
-    public void VerifyEmbeddedSignature_WindowsSystemBinary_IsTrusted()
-    {
-        var systemBinary = Path.Combine(Environment.SystemDirectory, "kernel32.dll");
-
-        Assert.True(
-            AuthenticodeTrustVerifier.VerifyEmbeddedSignature(systemBinary, out var failureReason),
-            failureReason);
-    }
-
-    [Fact]
     public void TryVerifyEmbeddedSignature_WindowsSystemBinary_ReturnsVerifiedSigner()
     {
         var systemBinary = Path.Combine(Environment.SystemDirectory, "kernel32.dll");
@@ -130,7 +119,7 @@ public class UpdatePackageTrustVerifierTests
     }
 
     [Fact]
-    public void VerifyEmbeddedSignature_ModifiedSignedBinary_IsRejected()
+    public void TryVerifyEmbeddedSignature_ModifiedSignedBinary_IsRejected()
     {
         var source = Path.Combine(Environment.SystemDirectory, "kernel32.dll");
         var modified = Path.Combine(Path.GetTempPath(), $"exlsxs-tampered-{Guid.NewGuid():N}.dll");
@@ -145,7 +134,8 @@ public class UpdatePackageTrustVerifierTests
                 stream.WriteByte((byte)(original ^ 0x01));
             }
 
-            Assert.False(AuthenticodeTrustVerifier.VerifyEmbeddedSignature(modified, out _));
+            Assert.False(AuthenticodeTrustVerifier.TryVerifyEmbeddedSignature(modified, out var signerCertificate, out _));
+            Assert.Null(signerCertificate);
         }
         finally
         {
@@ -220,8 +210,349 @@ public class UpdatePackageTrustVerifierTests
         }
     }
 
+    // Win32 の正規化で別ファイルに化ける名前は、PE 判定 (拡張子の末尾一致) をすり抜けるため拒否する。
+    [Theory]
+    [InlineData("lib/app/coreclr.dll.", true)]
+    [InlineData("lib/app/coreclr.dll ", true)]
+    [InlineData("lib/app/coreclr.dll::$DATA", true)]
+    [InlineData("lib/app./appsettings.json", true)]
+    [InlineData("lib/app/../coreclr.dll", true)]
+    [InlineData("/lib/app/x.bat", true)]
+    [InlineData("lib/app//Users/Public/x.bat", true)]
+    [InlineData("lib/app/coreclr.dll.__symlink", true)]
+    [InlineData("", true)]
+    [InlineData("lib/app/coreclr.dll", false)]
+    [InlineData("lib/app/vsto/", false)]
+    [InlineData("_rels/.rels", false)]
+    public void HasAmbiguousWindowsEntryName_DetectsWin32Aliases(string entryName, bool expected)
+    {
+        Assert.Equal(expected, UpdatePackageTrustVerifier.HasAmbiguousWindowsEntryName(entryName));
+    }
+
+    [Theory]
+    [InlineData("lib/app/coreclr.dll.")]
+    [InlineData("lib/app/coreclr.dll::$DATA")]
+    public void VerifyPackageFile_UnsignedPayloadBehindWin32Alias_IsRejectedAndDeleted(string aliasEntryName)
+    {
+        var systemBinary = Path.Combine(Environment.SystemDirectory, "kernel32.dll");
+        var settings = CreateSettingsForSignedFile(systemBinary);
+        var package = Path.Combine(Path.GetTempPath(), $"exlsxs-alias-{Guid.NewGuid():N}-full.nupkg");
+        CreatePackage(package, systemBinary, settings, includeTamperedEntry: false);
+        using (var archive = ZipFile.Open(package, ZipArchiveMode.Update))
+        {
+            // 必須エントリはすべて正しく署名されたまま、別名で未署名のペイロードだけを足す。
+            var alias = archive.CreateEntry(aliasEntryName);
+            using var stream = alias.Open();
+            stream.Write("not signed"u8);
+        }
+
+        try
+        {
+            Assert.False(UpdatePackageTrustVerifier.VerifyPackageFile(
+                package,
+                settings,
+                deleteUntrustedPackage: true,
+                out var message));
+            Assert.Contains("not allowed", message, StringComparison.OrdinalIgnoreCase);
+            Assert.False(File.Exists(package));
+        }
+        finally
+        {
+            if (File.Exists(package))
+            {
+                File.Delete(package);
+            }
+        }
+    }
+
+    // .NET は Info-ZIP Unicode Path (0x7075) を無視して readme.txt (非 PE) と読むが、
+    // Update.exe の zip クレートはこの値で coreclr.dll として展開する。署名検査前にパッケージごと拒否する。
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void VerifyPackageFile_UnicodePathExtraFieldAlias_IsRejectedAndDeleted(bool inCentralDirectory)
+    {
+        var systemBinary = Path.Combine(Environment.SystemDirectory, "kernel32.dll");
+        var settings = CreateSettingsForSignedFile(systemBinary);
+        var signed = File.ReadAllBytes(systemBinary);
+        var package = Path.Combine(Path.GetTempPath(), $"exlsxs-unicode-path-{Guid.NewGuid():N}-full.nupkg");
+        var aliasField = CreateUnicodePathExtraField("lib/app/readme.txt", "lib/app/coreclr.dll");
+        RawZipWriter.Write(package,
+        [
+            new("lib/app/EXLSXS.Host.exe", signed),
+            new("lib/app/EXLSXS.Host.dll", signed),
+            new("lib/app/vsto/EXLSXS.dll", signed),
+            new("lib/app/Squirrel.exe", signed),
+            new("lib/app/appsettings.json", CreatePackagedSettingsJson(settings)),
+            new("lib/app/readme.txt", "not signed"u8.ToArray(),
+                CentralExtra: inCentralDirectory ? aliasField : [],
+                LocalExtra: inCentralDirectory ? [] : aliasField)
+        ]);
+
+        try
+        {
+            Assert.False(UpdatePackageTrustVerifier.VerifyPackageFile(
+                package,
+                settings,
+                deleteUntrustedPackage: true,
+                out var message));
+            Assert.Contains("Unicode Path", message, StringComparison.OrdinalIgnoreCase);
+            Assert.False(File.Exists(package));
+        }
+        finally
+        {
+            if (File.Exists(package))
+            {
+                File.Delete(package);
+            }
+        }
+    }
+
+    // 末尾の中央ディレクトリは正規エントリだけ、非 PE エントリの中身に「未署名 coreclr.dll を指す別の zip」を埋め込む。
+    // zip クレートは末尾の読み取りに失敗すると手前の EOCD へ戻るため、戻り先がある時点で拒否する。
+    // 記載 offset をずらしても (zip クレートは前方を探して中央ヘッダーを使う)、size を偽っても
+    // (zip クレートは位置決めに size を使わない) 戻り先として拒否されること。
+    // 総数 0・ディスク上の数 1 以上の EOCD (zip クレートは中央ヘッダーを探さずに採用し、ディスク上の数だけ読む) も含める。
+    [Theory]
+    [InlineData(0u, null, false)]
+    [InlineData(5u, null, false)]
+    [InlineData(0u, 0u, false)]
+    [InlineData(0u, uint.MaxValue - 1, false)]
+    [InlineData(0u, null, true)]
+    public void VerifyPackageFile_EmbeddedAlternateCentralDirectory_IsRejectedAndDeleted(uint offsetShift, uint? sizeOverride, bool zeroTotalEntries)
+    {
+        var systemBinary = Path.Combine(Environment.SystemDirectory, "kernel32.dll");
+        var settings = CreateSettingsForSignedFile(systemBinary);
+        var signed = File.ReadAllBytes(systemBinary);
+        const string carrierName = "lib/app/notes.bin";
+        // 先頭エントリのデータはローカルヘッダー (30 バイト) + 名前の直後から始まる。
+        var carrierDataOffset = (uint)(30 + System.Text.Encoding.UTF8.GetByteCount(carrierName));
+        var hidden = RawZipWriter.Build(
+            [new("lib/app/coreclr.dll", "not signed"u8.ToArray())],
+            carrierDataOffset,
+            eocdOffsetShift: offsetShift,
+            eocdSizeOverride: sizeOverride,
+            eocdTotalEntriesOverride: zeroTotalEntries ? (ushort)0 : null);
+        var package = Path.Combine(Path.GetTempPath(), $"exlsxs-alt-cd-{Guid.NewGuid():N}-full.nupkg");
+        RawZipWriter.Write(package,
+        [
+            new(carrierName, hidden),
+            new("lib/app/EXLSXS.Host.exe", signed),
+            new("lib/app/EXLSXS.Host.dll", signed),
+            new("lib/app/vsto/EXLSXS.dll", signed),
+            new("lib/app/Squirrel.exe", signed),
+            new("lib/app/appsettings.json", CreatePackagedSettingsJson(settings))
+        ]);
+
+        try
+        {
+            Assert.False(UpdatePackageTrustVerifier.VerifyPackageFile(
+                package,
+                settings,
+                deleteUntrustedPackage: true,
+                out var message));
+            Assert.Contains("another end of central directory", message, StringComparison.OrdinalIgnoreCase);
+            Assert.False(File.Exists(package));
+        }
+        finally
+        {
+            if (File.Exists(package))
+            {
+                File.Delete(package);
+            }
+        }
+    }
+
+    // 末尾の EOCD にコメントを付けたもの・Zip64 の合図 (size の上限値) を持つものは、
+    // zip クレートと .NET で読み方が分かれうるため拒否する。.NET が開けない形なら、その時点で適用されない。
+    [Theory]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    public void VerifyPackageFile_EndRecordWithCommentOrZip64Marker_IsRejected(bool withComment, bool zip64SizeMarker)
+    {
+        var systemBinary = Path.Combine(Environment.SystemDirectory, "kernel32.dll");
+        var settings = CreateSettingsForSignedFile(systemBinary);
+        var signed = File.ReadAllBytes(systemBinary);
+        var bytes = RawZipWriter.Build(
+        [
+            new("lib/app/EXLSXS.Host.exe", signed),
+            new("lib/app/EXLSXS.Host.dll", signed),
+            new("lib/app/vsto/EXLSXS.dll", signed),
+            new("lib/app/Squirrel.exe", signed),
+            new("lib/app/appsettings.json", CreatePackagedSettingsJson(settings))
+        ], eocdSizeOverride: zip64SizeMarker ? uint.MaxValue : null);
+        if (withComment)
+        {
+            // EOCD のコメント長 (末尾 2 バイト) を 4 にして、コメントを足す。
+            bytes[^2] = 4;
+            bytes = [.. bytes, .. "note"u8.ToArray()];
+        }
+
+        var package = Path.Combine(Path.GetTempPath(), $"exlsxs-eocd-{Guid.NewGuid():N}-full.nupkg");
+        File.WriteAllBytes(package, bytes);
+        try
+        {
+            bool accepted;
+            try
+            {
+                accepted = UpdatePackageTrustVerifier.VerifyPackageFile(package, settings, deleteUntrustedPackage: false, out _);
+            }
+            catch (InvalidDataException)
+            {
+                accepted = false;
+            }
+
+            Assert.False(accepted);
+        }
+        finally
+        {
+            File.Delete(package);
+        }
+    }
+
+    // 同梱設定の形が不正 (ルートや Update がオブジェクトでない、JSON でない) でも例外にせず、
+    // 信頼設定の検証失敗として拒否・削除される (呼び出し元は Untrusted として扱える)。
+    [Theory]
+    [InlineData("[]")]
+    [InlineData("\"text\"")]
+    [InlineData("{\"Update\":[]}")]
+    [InlineData("{\"Update\":\"x\"}")]
+    [InlineData("not json")]
+    public void VerifyPackageFile_MalformedPackagedSettingsShape_IsRejectedWithoutThrowing(string settingsJson)
+    {
+        var systemBinary = Path.Combine(Environment.SystemDirectory, "kernel32.dll");
+        var settings = CreateSettingsForSignedFile(systemBinary);
+        var signed = File.ReadAllBytes(systemBinary);
+        var package = Path.Combine(Path.GetTempPath(), $"exlsxs-badsettings-{Guid.NewGuid():N}-full.nupkg");
+        RawZipWriter.Write(package,
+        [
+            new("lib/app/EXLSXS.Host.exe", signed),
+            new("lib/app/EXLSXS.Host.dll", signed),
+            new("lib/app/vsto/EXLSXS.dll", signed),
+            new("lib/app/Squirrel.exe", signed),
+            new("lib/app/appsettings.json", System.Text.Encoding.UTF8.GetBytes(settingsJson))
+        ]);
+
+        try
+        {
+            Assert.False(UpdatePackageTrustVerifier.VerifyPackageFile(
+                package,
+                settings,
+                deleteUntrustedPackage: true,
+                out var message));
+            Assert.Contains("Packaged publisher trust configuration", message, StringComparison.Ordinal);
+            Assert.False(File.Exists(package));
+        }
+        finally
+        {
+            if (File.Exists(package))
+            {
+                File.Delete(package);
+            }
+        }
+    }
+
+    // 必須エントリの欠落と、署名済みの updater が 0 件・2 件の組み合わせは、いずれも適用しない。
+    [Theory]
+    [InlineData("lib/app/EXLSXS.Host.exe")]
+    [InlineData("lib/app/EXLSXS.Host.dll")]
+    [InlineData("lib/app/vsto/EXLSXS.dll")]
+    [InlineData("lib/app/Squirrel.exe")]
+    public void VerifyPackageFile_MissingRequiredEntry_IsRejected(string missingEntry)
+    {
+        var systemBinary = Path.Combine(Environment.SystemDirectory, "kernel32.dll");
+        var settings = CreateSettingsForSignedFile(systemBinary);
+        var signed = File.ReadAllBytes(systemBinary);
+        var entries = new[]
+            {
+                "lib/app/EXLSXS.Host.exe",
+                "lib/app/EXLSXS.Host.dll",
+                "lib/app/vsto/EXLSXS.dll",
+                "lib/app/Squirrel.exe"
+            }
+            .Where(name => name != missingEntry)
+            .Select(name => new RawZipEntry(name, signed))
+            .Append(new RawZipEntry("lib/app/appsettings.json", CreatePackagedSettingsJson(settings)))
+            .ToList();
+        var package = Path.Combine(Path.GetTempPath(), $"exlsxs-missing-{Guid.NewGuid():N}-full.nupkg");
+        RawZipWriter.Write(package, entries);
+
+        try
+        {
+            Assert.False(UpdatePackageTrustVerifier.VerifyPackageFile(
+                package, settings, deleteUntrustedPackage: false, out var message));
+            Assert.Contains("was not found in the update package", message, StringComparison.Ordinal);
+        }
+        finally
+        {
+            File.Delete(package);
+        }
+    }
+
+    [Fact]
+    public void VerifyPackageFile_TwoSignedUpdaterEntries_IsRejected()
+    {
+        var systemBinary = Path.Combine(Environment.SystemDirectory, "kernel32.dll");
+        var settings = CreateSettingsForSignedFile(systemBinary);
+        var signed = File.ReadAllBytes(systemBinary);
+        var package = Path.Combine(Path.GetTempPath(), $"exlsxs-two-updaters-{Guid.NewGuid():N}-full.nupkg");
+        RawZipWriter.Write(package,
+        [
+            new("lib/app/EXLSXS.Host.exe", signed),
+            new("lib/app/EXLSXS.Host.dll", signed),
+            new("lib/app/vsto/EXLSXS.dll", signed),
+            new("lib/app/Squirrel.exe", signed),
+            new("lib/app/other/Squirrel.exe", signed),
+            new("lib/app/appsettings.json", CreatePackagedSettingsJson(settings))
+        ]);
+
+        try
+        {
+            Assert.False(UpdatePackageTrustVerifier.VerifyPackageFile(
+                package, settings, deleteUntrustedPackage: false, out var message));
+            Assert.Contains("exactly one", message, StringComparison.Ordinal);
+        }
+        finally
+        {
+            File.Delete(package);
+        }
+    }
+
+    // 同じ書き方で拡張フィールドを付けなければ受理されることを確かめ、上のテストが
+    // 自前 zip の構造不備ではなく 0x7075 そのもので落ちていることを保証する。
+    [Fact]
+    public void VerifyPackageFile_RawZipWithoutExtraFields_IsAccepted()
+    {
+        var systemBinary = Path.Combine(Environment.SystemDirectory, "kernel32.dll");
+        var settings = CreateSettingsForSignedFile(systemBinary);
+        var signed = File.ReadAllBytes(systemBinary);
+        var package = Path.Combine(Path.GetTempPath(), $"exlsxs-raw-{Guid.NewGuid():N}-full.nupkg");
+        RawZipWriter.Write(package,
+        [
+            new("lib/app/EXLSXS.Host.exe", signed),
+            new("lib/app/EXLSXS.Host.dll", signed),
+            new("lib/app/vsto/EXLSXS.dll", signed),
+            new("lib/app/Squirrel.exe", signed),
+            new("lib/app/appsettings.json", CreatePackagedSettingsJson(settings)),
+            new("lib/app/readme.txt", "plain text"u8.ToArray())
+        ]);
+
+        try
+        {
+            Assert.True(
+                UpdatePackageTrustVerifier.VerifyPackageFile(package, settings, deleteUntrustedPackage: false, out var message),
+                message);
+        }
+        finally
+        {
+            File.Delete(package);
+        }
+    }
+
     [Theory]
     [InlineData("https://exlsxs.kagayoi.com", "Simple", "win", "", false, true)]
+    [InlineData("https://exlsxs.kagayoi.com:443", "Simple", "win", "", false, true)]
+    [InlineData("https://exlsxs.kagayoi.com:8443", "Simple", "win", "", false, false)]
     [InlineData("https://exlsxs.nephilim.jp", "Simple", "win", "", false, true)]
     [InlineData("https://attacker.example", "Simple", "win", "", false, false)]
     [InlineData("https://exlsxs.kagayoi.com", "Github", "win", "", false, false)]
@@ -279,7 +610,8 @@ public class UpdatePackageTrustVerifierTests
                     settings,
                     out var message),
                 message);
-            Assert.True(AuthenticodeTrustVerifier.VerifyEmbeddedSignature(updaterPath, out message), message);
+            Assert.True(AuthenticodeTrustVerifier.TryVerifyEmbeddedSignature(updaterPath, out var signerCertificate, out message), message);
+            signerCertificate?.Dispose();
         }
         finally
         {
@@ -294,7 +626,8 @@ public class UpdatePackageTrustVerifierTests
         File.WriteAllText(updaterPath, "trusted updater");
         try
         {
-            using var updaterReadLock = new FileStream(updaterPath, FileMode.Open, FileAccess.Read, FileShare.Read);
+            // 製品と同じヘルパーでロックを取る (FileShare を緩めるとこのテストが失敗する)。
+            using var updaterReadLock = UpdateChecker.OpenUpdaterWriteDenyHandle(updaterPath);
 
             Assert.Throws<IOException>(() => File.WriteAllBytes(updaterPath, [1, 2, 3]));
         }
@@ -343,19 +676,7 @@ public class UpdatePackageTrustVerifierTests
         var settingsEntry = archive.CreateEntry("lib/app/appsettings.json");
         using (var stream = settingsEntry.Open())
         {
-            JsonSerializer.Serialize(stream, new
-            {
-                Update = new
-                {
-                    settings.Source,
-                    SourceKind = settings.SourceKind.ToString(),
-                    settings.Channel,
-                    settings.AccessToken,
-                    settings.Prerelease,
-                    settings.ExpectedPublisherThumbprint,
-                    settings.ExpectedPublisherSubject
-                }
-            });
+            stream.Write(CreatePackagedSettingsJson(settings));
         }
 
         if (!includeTamperedEntry)
@@ -368,5 +689,135 @@ public class UpdatePackageTrustVerifierTests
         var tamperedEntry = archive.CreateEntry("lib/app/tampered.dll");
         using var tamperedStream = tamperedEntry.Open();
         tamperedStream.Write(bytes);
+    }
+
+    private static byte[] CreatePackagedSettingsJson(UpdateSettings settings)
+    {
+        return JsonSerializer.SerializeToUtf8Bytes(new
+        {
+            Update = new
+            {
+                settings.Source,
+                SourceKind = settings.SourceKind.ToString(),
+                settings.Channel,
+                settings.AccessToken,
+                settings.Prerelease,
+                settings.ExpectedPublisherThumbprint,
+                settings.ExpectedPublisherSubject
+            }
+        });
+    }
+
+    // Info-ZIP Unicode Path 拡張フィールド: version(1) + ヘッダー名の CRC-32 + UTF-8 の名前。
+    // zip クレートは CRC がヘッダー名と一致するとき、この名前でヘッダー名を置き換える。
+    private static byte[] CreateUnicodePathExtraField(string headerName, string aliasName)
+    {
+        var alias = System.Text.Encoding.UTF8.GetBytes(aliasName);
+        var data = new byte[1 + 4 + alias.Length];
+        data[0] = 1;
+        BitConverter.TryWriteBytes(data.AsSpan(1), RawZipWriter.Crc32(System.Text.Encoding.UTF8.GetBytes(headerName)));
+        alias.CopyTo(data, 5);
+
+        var field = new byte[4 + data.Length];
+        BitConverter.TryWriteBytes(field.AsSpan(0), (ushort)0x7075);
+        BitConverter.TryWriteBytes(field.AsSpan(2), (ushort)data.Length);
+        data.CopyTo(field, 4);
+        return field;
+    }
+
+    private sealed record RawZipEntry(string Name, byte[] Data, byte[]? CentralExtra = null, byte[]? LocalExtra = null);
+
+    // 拡張フィールドを自由に付けるため、無圧縮 (stored) の zip を手で組み立てる最小限の書き出し。
+    private static class RawZipWriter
+    {
+        public static void Write(string path, IReadOnlyList<RawZipEntry> entries)
+            => File.WriteAllBytes(path, Build(entries));
+
+        // baseOffset: 組み立てた zip を別ファイルのこの位置へ埋め込む前提で、記録する位置をずらす。
+        // eocdOffsetShift / eocdSizeOverride: EOCD に記載する中央ディレクトリの offset / size を細工する。
+        public static byte[] Build(
+            IReadOnlyList<RawZipEntry> entries,
+            uint baseOffset = 0,
+            uint eocdOffsetShift = 0,
+            uint? eocdSizeOverride = null,
+            ushort? eocdTotalEntriesOverride = null)
+        {
+            using var output = new MemoryStream();
+            using var writer = new BinaryWriter(output);
+            var offsets = new List<uint>();
+            foreach (var entry in entries)
+            {
+                var name = System.Text.Encoding.UTF8.GetBytes(entry.Name);
+                var localExtra = entry.LocalExtra ?? [];
+                offsets.Add(baseOffset + (uint)output.Position);
+                writer.Write(0x04034b50u);
+                writer.Write((ushort)20);
+                writer.Write((ushort)0x0800);
+                writer.Write((ushort)0);
+                writer.Write(0u);
+                writer.Write(Crc32(entry.Data));
+                writer.Write((uint)entry.Data.Length);
+                writer.Write((uint)entry.Data.Length);
+                writer.Write((ushort)name.Length);
+                writer.Write((ushort)localExtra.Length);
+                writer.Write(name);
+                writer.Write(localExtra);
+                writer.Write(entry.Data);
+            }
+
+            var centralStartInBuffer = (uint)output.Position;
+            var centralStart = baseOffset + centralStartInBuffer;
+            for (var i = 0; i < entries.Count; i++)
+            {
+                var entry = entries[i];
+                var name = System.Text.Encoding.UTF8.GetBytes(entry.Name);
+                var centralExtra = entry.CentralExtra ?? [];
+                writer.Write(0x02014b50u);
+                writer.Write((ushort)20);
+                writer.Write((ushort)20);
+                writer.Write((ushort)0x0800);
+                writer.Write((ushort)0);
+                writer.Write(0u);
+                writer.Write(Crc32(entry.Data));
+                writer.Write((uint)entry.Data.Length);
+                writer.Write((uint)entry.Data.Length);
+                writer.Write((ushort)name.Length);
+                writer.Write((ushort)centralExtra.Length);
+                writer.Write((ushort)0);
+                writer.Write((ushort)0);
+                writer.Write((ushort)0);
+                writer.Write(0u);
+                writer.Write(offsets[i]);
+                writer.Write(name);
+                writer.Write(centralExtra);
+            }
+
+            var centralSize = (uint)output.Position - centralStartInBuffer;
+            writer.Write(0x06054b50u);
+            writer.Write((ushort)0);
+            writer.Write((ushort)0);
+            writer.Write((ushort)entries.Count);
+            writer.Write(eocdTotalEntriesOverride ?? (ushort)entries.Count);
+            writer.Write(eocdSizeOverride ?? centralSize);
+            writer.Write(centralStart - eocdOffsetShift);
+            writer.Write((ushort)0);
+            writer.Flush();
+            return output.ToArray();
+        }
+
+        public static uint Crc32(byte[] data)
+        {
+            var crc = 0xFFFFFFFFu;
+            foreach (var value in data)
+            {
+                crc ^= value;
+                for (var bit = 0; bit < 8; bit++)
+                {
+                    crc = (crc & 1) != 0 ? (crc >> 1) ^ 0xEDB88320u : crc >> 1;
+                }
+            }
+
+            return ~crc;
+        }
     }
 }

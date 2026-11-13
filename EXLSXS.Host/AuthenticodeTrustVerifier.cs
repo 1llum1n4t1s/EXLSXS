@@ -17,19 +17,6 @@ internal static class AuthenticodeTrustVerifier
     private static readonly Guid WinTrustActionGenericVerifyV2 =
         new("00AAC56B-CD44-11D0-8CC2-00C04FC295EE");
 
-    internal static bool VerifyEmbeddedSignature(string filePath, out string failureReason)
-    {
-        X509Certificate2? signerCertificate = null;
-        try
-        {
-            return TryVerifyEmbeddedSignature(filePath, out signerCertificate, out failureReason);
-        }
-        finally
-        {
-            signerCertificate?.Dispose();
-        }
-    }
-
     internal static bool TryVerifyEmbeddedSignature(
         string filePath,
         out X509Certificate2? signerCertificate,

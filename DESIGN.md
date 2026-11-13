@@ -11,11 +11,11 @@ EXLSXSは、Excelブック内の全ワークシートへ表示モード、表示
 | コンポーネント | 実行環境 | 責務と境界 |
 | --- | --- | --- |
 | `EXLSXS/` | .NET Framework 4.8.1 / Excel VSTO | リボンUI、設定値の保持、Excel COMを介した全シート整形を担う。配布・更新処理は持たない |
-| `EXLSXS.Host/` | .NET 10 Windows | Velopackのinstall/update/uninstall callback、前提条件確認、VSTO登録、Windows起動時登録、自動更新、更新パッケージの署名検証を担う。Excelのシート操作は行わない |
+| `EXLSXS.Host/` | .NET 11 Windows | Velopackのinstall/update/uninstall callback、前提条件確認、VSTO登録、Windows起動時登録、自動更新、更新パッケージの署名検証を担う。Excelのシート操作は行わない |
 | `build/pack-velopack.ps1` | PowerShell | VSTO publish、ホストpublish、フラットなstaging構築、署名、`vpk pack`を一つのパッケージング処理へまとめる |
-| `scripts/release-local.ps1` | PowerShell | リリース前検査、署名付きpack、署名検証、R2 upload、Cloudflare cache purge、公開manifest確認、旧世代ファイルの整理を直列実行する |
+| `scripts/release-local.ps1` | PowerShell | リリース前検査、署名付きpack、署名検証、R2 upload、Cloudflare cache purge、旧世代ファイルの整理を直列実行する |
 | `../vps-web/lp/exlsxs/` | Cloudflare Worker + `LP_CONTENT` service binding | `/`と`/index.html`のHTMLおよび`/common.css`をbinding先から取得する。gatewayはそれ以外の要求を`fetch(request)`で既存のR2配信へ委譲する |
-| `EXLSXS.Host.Tests/` | .NET 10 / `xunit.v3` / Microsoft.NET.Test.Sdk | 更新元判定、更新設定、署名検証用の正規化規則など、ホストの外部境界に近い規則を検証する |
+| `EXLSXS.Host.Tests/` | .NET 11 / `xunit.v3` / Microsoft.NET.Test.Sdk | 更新元判定、更新設定、署名検証用の正規化規則など、ホストの外部境界に近い規則を検証する |
 
 ## データフロー
 
@@ -41,7 +41,7 @@ EXLSXSは、Excelブック内の全ワークシートへ表示モード、表示
 1. Windows起動時にホストが`--update-check`で実行され、VSTO登録を保守してから更新確認を始める。登録保守に失敗してもログを残して更新確認は続行する。この経路では前提条件installerを起動せず、予期しないUAC表示を避ける。
 2. `UpdateSettings`が`appsettings.json`を読み、その後`EXLSXS_UPDATE_*`環境変数で上書きする。更新元が未設定、またはVelopack install外なら確認を終了する。
 3. `UpdateChecker`が設定に応じて通常URLまたはGitHub sourceを選び、timeout付きで更新確認とdownloadを行う。
-4. download後、`UpdatePackageTrustVerifier`が`EXLSXS.Host.exe`、`EXLSXS.Host.dll`、`EXLSXS.dll`の署名、証明書chain、期待thumbprintとsubjectを検証する。署名者証明書は`WinVerifyTrust`が成功した同じprovider stateから取得し、信頼判定と発行元照合を分離しない。
+4. download後、`UpdatePackageTrustVerifier`が必須4ファイル(`EXLSXS.Host.exe`、`EXLSXS.Host.dll`、`EXLSXS.dll`、updaterの`Squirrel.exe`)の署名、証明書chain、期待thumbprintとsubjectを検証する。それ以外の全PEエントリもEXLSXS発行者またはMicrosoftの署名を要求し、同梱`appsettings.json`の配信元・信頼設定も照合する。検査側(.NETの`ZipArchive`)と展開側(VelopackのUpdate.exe、Rustの`zip`クレート)が同じ名前・同じアーカイブを読むことも前提にする。そのため、次のいずれかに当たるパッケージは拒否する。Win32の正規化で別名になるエントリ名(末尾のドット・空白、`:`など)、ルート付きパスや空のパス要素、`__symlink`終わり、Info-ZIP Unicode Path拡張フィールド(0x7075)、中央ディレクトリとローカルヘッダーの名前の不一致、末尾ちょうど22バイト以外のEOCD(コメント付き)、Zip64・分割アーカイブ、展開側の戻り先になりうる別のEOCD。署名者証明書は`WinVerifyTrust`が成功した同じprovider stateから取得し、信頼判定と発行元照合を分離しない。download中はupdaterへの書き込みを拒否するハンドルを保持し、検証済みのupdaterだけを配置する。
 5. 信頼検証に成功したパッケージだけを`ApplyUpdatesAndExit`へ渡す。未信頼または検証設定なしのパッケージは適用しない。
 
 ### パッケージ作成と公開
@@ -49,7 +49,7 @@ EXLSXSは、Excelブック内の全ワークシートへ表示モード、表示
 1. `Directory.Build.props`の`Version`からVSTO、ホスト、Velopack成果物のversionを導出する。
 2. VSTOをRebuildし、配布用DLLをAuthenticode署名してから、DLLを再ビルドせずにClickOnceマニフェストを再生成してpublishする。`PublishOnly`単独では署名前のDLLのハッシュが残るため、参照解決と`VisualStudioForApplicationsBuild`を先に実行する。
 3. publish内側の`EXLSXS.dll.manifest`（application manifest）、アセンブリ、依存DLLと、同じビルド出力の`EXLSXS.vsto`（deployment manifest）をフラットに配置する。梱包前に両manifestとDLLの版数、deploymentからapplicationへのidentityとハッシュ、applicationからDLLへのサイズとハッシュを照合し、不一致なら中断する。ホスト成果物とともにstagingへ配置し、`vpk`がinstaller、portable package、release manifestを生成する。VelopackライブラリとCLIは同じ検証済み安定版を使う。
-4. release scriptは通常packを実行するが、`-SkipBuild`では現在のversionのfull nupkgを`-ExpectedPackageSha256`と照合し、ビルドと再署名を省略する。これにより実機検証したパッケージと配信するパッケージの同一性を保つ。いずれの経路でも成果物の署名を再検証してR2へuploadし、新旧両配信ホストでURLが固定された成果物のCloudflare cacheをpurgeする。両ホストの固定URLからcache-bustingや`no-cache`なしで取得した公開manifestがローカル成果物と一致してから旧世代を整理する。
+4. release scriptは通常packを実行するが、`-SkipBuild`では現在のversionのfull nupkgを`-ExpectedPackageSha256`と照合し、ビルドと再署名を省略する。これにより実機検証したパッケージと配信するパッケージの同一性を保つ。いずれの経路でも成果物の署名を再検証してR2へuploadし、新旧両配信ホストでURLが固定された成果物のCloudflare cacheをpurgeする。その後、ローカルmanifestの参照と世代保持方針に従って旧世代を整理する。
 5. 公開ページのgatewayはHTMLと共通CSSを`LP_CONTENT`へ、manifest、package、installerの要求を既存のR2配信へ振り分ける。
 
 ## 状態と外部境界
@@ -73,13 +73,13 @@ EXLSXSは、Excelブック内の全ワークシートへ表示モード、表示
 - 全シート整形で一時変更したExcelのイベント、画面更新、計算モードは、COM操作の成否を問わず変更前の値へbest-effortで戻す。
 - first runと明示的な`--register`で前提条件の自動導入と`LoadBehavior`強制を許可し、update・通常起動ではユーザーまたはOfficeが無効化した状態を保持する。
 - after-install fast callbackでは前提installerを待たず、RunOnceに次回ログオンで一度だけ実行する登録再試行を予約する。first runで先に登録できた場合またはuninstall時は予約を削除する。
-- 更新パッケージはpublisher trust設定と必須3ファイルの署名検証を通過するまで適用しない。発行元照合には`WinVerifyTrust`の検証済みprovider stateから得た署名者だけを使う。
-- リリースの固定名ファイルを更新した後は新旧両配信ホストの対象URLをCloudflare cacheからpurgeし、両方の固定URLにある公開manifestとの一致を確認するまで旧世代を整理しない。
+- 更新パッケージはpublisher trust設定と、zip構造の一致検査、必須4ファイルを含む全PEの署名検証を通過するまで適用しない。発行元照合には`WinVerifyTrust`の検証済みprovider stateから得た署名者だけを使う。
+- リリースの固定名ファイルを更新した後は新旧両配信ホストの対象URLをCloudflare cacheからpurgeし、ローカルmanifestの参照と世代保持方針に従って旧世代を整理する。
 - 旧`nephilim.jp`の更新配信経路は2027-05-31まで維持し、配信ファイルをroot redirectへ巻き込まない。
 
 ## 採用済みの設計判断
 
-- **VSTO本体とVelopackホストの分離**: Excel統合は.NET Framework/VSTOへ残し、installer・更新・署名検証は.NET 10ホストへ集約する。実行環境は二重になるが、VSTO互換性と現行の配布機能を両立できる。
+- **VSTO本体とVelopackホストの分離**: Excel統合は.NET Framework/VSTOへ残し、installer・更新・署名検証は.NET 11ホストへ集約する。実行環境は二重になるが、VSTO互換性と現行の配布機能を両立できる。
 - **ユーザー単位の登録**: 設定、VSTO登録、起動時更新をHKCUへ置く。アドインの登録には管理者権限を不要にする代わりに、Windows userごとに登録状態を持つ。前提ランタイムが不足する場合の導入ではUAC昇格が発生し得る。
 - **シート単位のbest-effort処理**: COM例外や保護・非表示状態でブック全体を中断せず、適用可能なシートを処理する。部分適用になり得るため、保護シートでは書式変更を明示的に避ける。
 - **登録処理とVelopack fast callbackの分離**: after-install callbackはRunOnceの回復経路だけを短時間で登録し、前提条件導入とVSTO登録はfirst runまたは`--register`へ委ねる。インストール完了を長時間ブロックせず、first runが起動しない場合や再起動が必要な場合にも登録を再試行できる。

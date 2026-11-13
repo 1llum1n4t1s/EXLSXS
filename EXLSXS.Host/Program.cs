@@ -1,6 +1,11 @@
 using System.Runtime.InteropServices;
 using Velopack;
 
+// このアセンブリの P/Invoke (wintrust.dll / shell32.dll) は System32 からだけ読み込む (CA5392)。
+// インストール先はユーザーが書き込めるため、署名検証を担う wintrust.dll (KnownDLLs 外) を
+// アプリフォルダーから先に解決させない。Velopack.dll など他アセンブリの P/Invoke には影響しない。
+[assembly: DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
+
 namespace EXLSXS.Host;
 
 internal static class Program
