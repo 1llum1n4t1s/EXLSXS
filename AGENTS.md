@@ -73,7 +73,7 @@ pwsh -NoProfile -File ../vps-web/deploy/deploy-lp.ps1 -Product exlsxs
 
 ### ローカルリリースの実行
 
-署名は Sigilune（Certum のクラウド鍵）で行い、SimplySign Desktop は使わない。Authenticode 署名に加え、VSTO の `EXLSXS.dll.manifest` / `EXLSXS.vsto` も `sigilune sign-manifest` で署名する（MSBuild の publish はこの実行だけの使い捨て証明書で行い、ステージング後に署名し直す）。公開依頼時は `/vava` が main と `release/<version>` を push すると、`release/**` への push で GitHub Actions の `release.yml` が自動で起動し、承認待ちなしで実行される（Environment `release` は承認者なし・`release/*` だけを許可するブランチ制限）。`workflow_dispatch` は同じ `release/<version>` を指定した再実行にだけ使い、タグは使わない。ローカルで実行するときは、先に `sigilune status` で登録を確認してから実行する。
+署名は Sigilune（Certum のクラウド鍵）で行い、SimplySign Desktop は使わない。Authenticode 署名に加え、VSTO の `EXLSXS.dll.manifest` / `EXLSXS.vsto` も `sigilune sign-manifest` で署名する（MSBuild の publish はこの実行だけの使い捨て証明書で行い、ステージング後に署名し直す）。公開依頼時は `/vava` が main と `release/<version>` を push すると、`release/**` への push で GitHub Actions の `release.yml` が自動で起動し、署名・配信の前に `test` ジョブ（R2 転送 fixture と `EXLSXS.Host.Tests`）を通し、承認待ちなしで実行される（Environment `release` は承認者なし・`release/*` だけを許可するブランチ制限）。`workflow_dispatch` は同じ `release/<version>` を指定した再実行にだけ使い、タグは使わない。ローカルで実行するときは、先に `sigilune status` で登録を確認してから実行する。
 
 ```powershell
 sigilune status
